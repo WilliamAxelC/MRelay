@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Loader2 } from 'lucide-react';
+import { Search, Loader2, PlayCircle, Plus, Sparkles, X } from 'lucide-react';
 
 interface MediaIngestionFormProps {
-  onIngest: (url: string, playNext?: boolean) => Promise<void>;
+  onIngest: (urlOrItem: string | any, playNext?: boolean) => Promise<void>;
   disabled?: boolean;
 }
 
@@ -13,13 +13,14 @@ interface SearchResult {
   author: string;
 }
 
-export const MediaIngestionForm: React.FC<MediaIngestionFormProps> = ({ onIngest, disabled }) => {
-  const [trackUrl, setTrackUrl] = useState('');
+export const MediaIngestionForm: React.FC<MediaIngestionFormProps> = React.memo(({ onIngest, disabled }) => {
+  const [query, setQuery] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
-  const debounceRef = useRef<number | ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -29,26 +30,38 @@ export const MediaIngestionForm: React.FC<MediaIngestionFormProps> = ({ onIngest
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+    };
   }, []);
 
-  const performSearch = async (query: string) => {
-    if (!query || query.match(/^https?:\/\//)) {
+  const performSearch = async (searchTerm: string) => {
+    if (!searchTerm || searchTerm.match(/^https?:\/\//)) {
       setSearchResults([]);
       setShowDropdown(false);
       return;
     }
-    
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     setIsSearching(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(searchTerm)}`, {
+        signal: abortControllerRef.current.signal
+      });
       if (res.ok) {
         const data = await res.json();
         setSearchResults(data.results || []);
         setShowDropdown(true);
       }
-    } catch (err) {
-      console.error('[Search Error]', err);
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('[Search Error]', err);
+      }
     } finally {
       setIsSearching(false);
     }
@@ -56,88 +69,156 @@ export const MediaIngestionForm: React.FC<MediaIngestionFormProps> = ({ onIngest
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
-    setTrackUrl(val);
+    setQuery(val);
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    
-    if (val.trim().length > 2 && !val.match(/^https?:\/\//)) {
+
+    if (val.trim().length >= 2 && !val.match(/^https?:\/\//)) {
       debounceRef.current = setTimeout(() => {
         performSearch(val.trim());
-      }, 500);
+      }, 400);
     } else {
       setSearchResults([]);
       setShowDropdown(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent, forceInput?: string, mode?: 'next' | 'end') => {
-    if (e) e.preventDefault();
-    const input = forceInput || trackUrl.trim();
-    if (!input || isSubmitting || disabled) return;
-
-    // Prevent submitting raw search queries to the backend ingestion
-    if (!forceInput && !input.match(/^https?:\/\//) && input.length !== 11) {
-      return;
-    }
-
+  const handleSelectTrack = async (item: SearchResult, mode: 'end' | 'next') => {
     setIsSubmitting(true);
     setShowDropdown(false);
     try {
-      await onIngest(input, mode === 'next');
-      setTrackUrl('');
+      await onIngest({
+        videoId: item.videoId,
+        title: item.title,
+        duration: item.duration,
+        author: item.author
+      }, mode === 'next');
+      setQuery('');
       setSearchResults([]);
     } catch (err) {
-      console.error('[Ingestion Form Error]', err);
+      console.error('[Ingest Select Error]', err);
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const input = query.trim();
+    if (!input || isSubmitting || disabled) return;
+
+    if (input.match(/^https?:\/\//) || input.length === 11) {
+      setIsSubmitting(true);
+      setShowDropdown(false);
+      try {
+        await onIngest(input, false);
+        setQuery('');
+        setSearchResults([]);
+      } catch (err) {
+        console.error('[Ingestion Form Error]', err);
+      } finally {
+        setIsSubmitting(false);
+      }
+    } else {
+      performSearch(input);
+    }
+  };
+
   return (
     <div ref={wrapperRef} className="relative w-full">
-      <form 
-        onSubmit={(e) => handleSubmit(e, undefined, 'end')} 
-        className="flex gap-2 p-1.5 bg-zinc-900 rounded-[1.5rem] border border-zinc-800 focus-within:ring-2 focus-within:ring-zinc-700 transition-all z-20 relative"
+      <form
+        onSubmit={handleSubmit}
+        className="flex items-center gap-2 p-2 bg-zinc-900/90 rounded-2xl border border-zinc-800 focus-within:border-emerald-500/80 focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all shadow-xl backdrop-blur-xl z-30 relative"
       >
-        <div className="flex-1 flex items-center bg-transparent px-4">
-          <Search className="w-4 h-4 text-zinc-500 mr-2" />
+        <div className="flex-1 flex items-center bg-transparent px-3 min-w-0">
+          <Search className="w-4 h-4 text-zinc-500 mr-2.5 shrink-0" />
           <input
             type="text"
-            placeholder="Search YouTube or paste a link..."
-            value={trackUrl}
+            placeholder="Search YouTube track or paste link / playlist..."
+            value={query}
             onChange={handleInputChange}
             disabled={disabled || isSubmitting}
-            className="flex-1 bg-transparent py-2 text-sm focus:outline-none placeholder:text-zinc-600 disabled:opacity-50 text-white"
+            className="flex-1 bg-transparent py-1.5 text-sm focus:outline-none placeholder:text-zinc-500 disabled:opacity-50 text-white truncate font-medium"
           />
+          {query && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery('');
+                setSearchResults([]);
+                setShowDropdown(false);
+              }}
+              className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-white shrink-0 ml-1"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
-        <button 
-          type="submit" 
-          disabled={disabled || isSubmitting}
-          className="bg-white text-black p-2.5 rounded-xl hover:bg-zinc-200 transition-all active:scale-95 disabled:opacity-50"
+
+        <button
+          type="submit"
+          disabled={disabled || isSubmitting || !query.trim()}
+          className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded-xl transition-all active:scale-95 disabled:opacity-40 disabled:pointer-events-none text-xs uppercase tracking-wider flex items-center gap-1.5 shrink-0 shadow-lg shadow-emerald-500/10"
         >
-          {isSearching ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+          {isSearching ? (
+            <Loader2 className="w-4 h-4 animate-spin text-black" />
+          ) : (
+            <>
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Search</span>
+            </>
+          )}
         </button>
       </form>
-      
+
       {showDropdown && searchResults.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-2 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden z-50 max-h-80 overflow-y-auto">
+        <div className="absolute top-full left-0 right-0 mt-2 bg-zinc-950/95 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden z-50 max-h-96 overflow-y-auto backdrop-blur-2xl divide-y divide-zinc-900 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="p-3 bg-zinc-900/60 flex items-center justify-between border-b border-zinc-800/80">
+            <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+              Search Results ({searchResults.length})
+            </span>
+            <span className="text-[10px] text-zinc-500">Select an action</span>
+          </div>
+
           {searchResults.map((result) => (
-            <div 
+            <div
               key={result.videoId}
-              className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 hover:bg-zinc-800 transition-colors border-b border-zinc-800/50 last:border-b-0 group"
+              className="flex items-center justify-between gap-3 p-3 hover:bg-zinc-900/80 transition-colors group cursor-pointer"
+              onClick={() => handleSelectTrack(result, 'end')}
             >
-              <div className="flex items-center gap-3 w-full sm:w-auto flex-1 cursor-pointer" onClick={() => handleSubmit(null as any, result.videoId, 'end')}>
-                <div className="w-16 h-9 bg-zinc-800 rounded flex items-center justify-center overflow-hidden shrink-0">
-                  <img src={`https://img.youtube.com/vi/${result.videoId}/mqdefault.jpg`} className="w-full h-full object-cover" />
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-14 h-10 bg-zinc-900 rounded-xl overflow-hidden shrink-0 border border-zinc-800 shadow">
+                  <img
+                    src={`https://img.youtube.com/vi/${result.videoId}/mqdefault.jpg`}
+                    alt={result.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                  />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-zinc-200 truncate">{result.title}</div>
-                  <div className="text-[10px] text-zinc-500 truncate">{result.author} • {result.duration}</div>
+                  <h4 className="text-xs font-bold text-white truncate group-hover:text-emerald-400 transition-colors">
+                    {result.title}
+                  </h4>
+                  <p className="text-[10px] text-zinc-500 truncate mt-0.5">
+                    {result.author} {result.duration && `• ${result.duration}`}
+                  </p>
                 </div>
               </div>
-              <div className="flex gap-2 w-full sm:w-auto opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity justify-end shrink-0">
-                <button onClick={(e) => { e.stopPropagation(); handleSubmit(null as any, result.videoId, 'next'); }} className="text-[10px] px-3 py-1.5 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 rounded-md font-medium whitespace-nowrap">Play Next</button>
-                <button onClick={(e) => { e.stopPropagation(); handleSubmit(null as any, result.videoId, 'end'); }} className="text-[10px] px-3 py-1.5 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 rounded-md font-medium whitespace-nowrap">Add to Queue</button>
+
+              <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => handleSelectTrack(result, 'next')}
+                  className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-[10px] font-bold transition-all whitespace-nowrap active:scale-95 flex items-center gap-1"
+                >
+                  <PlayCircle className="w-3 h-3" />
+                  <span>Play Next</span>
+                </button>
+                <button
+                  onClick={() => handleSelectTrack(result, 'end')}
+                  className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-[10px] font-bold transition-all whitespace-nowrap active:scale-95 flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Add</span>
+                </button>
               </div>
             </div>
           ))}
@@ -145,5 +226,4 @@ export const MediaIngestionForm: React.FC<MediaIngestionFormProps> = ({ onIngest
       )}
     </div>
   );
-};
-
+});

@@ -24,7 +24,7 @@ docker-compose.override.yml
 Thumbs.db
 
 # Local Workspace
-handoff.md
+docs/
 handoff.md
 
 ExecutionRules.md

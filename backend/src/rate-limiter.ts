@@ -41,5 +41,15 @@ export class RateLimiter {
     this.tokens.delete(socketId);
     this.lastUpdate.delete(socketId);
   }
+
+  sweepStale(maxAgeMs: number = 60000) {
+    const now = Date.now();
+    for (const [socketId, lastTime] of this.lastUpdate.entries()) {
+      if (now - lastTime > maxAgeMs) {
+        this.tokens.delete(socketId);
+        this.lastUpdate.delete(socketId);
+      }
+    }
+  }
 }
 

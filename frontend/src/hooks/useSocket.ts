@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { useP2P } from './useP2P';
+import type { P2PMessage } from './useP2P';
 
 export interface ChatMessage {
   id: string;
@@ -12,134 +14,201 @@ export interface ChatMessage {
 export interface QueueItem {
   videoId: string;
   title: string;
+  duration?: string;
+  author?: string;
+  addedBy?: {
+    userId: string;
+    username: string;
+  };
+  upvotes?: string[];
 }
 
-interface HistoryItem extends QueueItem {
+export interface HistoryItem extends QueueItem {
   status: 'played' | 'skipped';
   timestamp: number;
 }
 
-interface StateSync {
+export interface PendingRequest {
+  id: string;
+  trackId: string;
+  title: string;
+  duration?: string;
+  author?: string;
+  username: string;
+  userId: string;
+}
+
+export interface PeerInfo {
+  socketId: string;
+  userId: string;
+  username: string;
+  isDetached?: boolean;
+}
+
+export interface RoomState {
   roomId: string;
   title: string;
   isPlaying: boolean;
   currentPlayhead: number;
   currentTrackId: string;
+  currentTitle: string;
+  currentDuration?: string;
+  currentAuthor?: string;
+  currentTrackAddedBy?: { userId: string; username: string };
   updatedAt: number;
   queue: QueueItem[];
   history: HistoryItem[];
   isPublic?: boolean;
   isRequestOnly?: boolean;
-  pendingRequests?: { id: string; trackId: string; title: string; username: string }[];
-  peers?: { socketId: string; userId: string; username: string }[];
+  isDjAutoplayEnabled?: boolean;
+  pendingRequests?: PendingRequest[];
+  peers?: PeerInfo[];
   hostUserId?: string;
   chatRateLimit?: { maxTokens: number; intervalMs: number };
   repeatMode?: 'off' | 'track' | 'queue';
 }
 
-export function useSocket(roomId: string | null, userId: string, username: string, password?: string, title?: string, isUnsynced: boolean = false, onRoomClosed?: (message: string) => void) {
+export function useSocket(
+  roomId: string | null,
+  userId: string,
+  username: string,
+  password?: string,
+  title?: string,
+  isUnsynced: boolean = false,
+  onRoomClosed?: (message: string) => void,
+  onPlayheadTick?: (playhead: number) => void,
+  onPeerReaction?: (emoji: string) => void
+) {
+  const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [roomState, setRoomState] = useState<StateSync | null>(null);
+  const [roomState, setRoomState] = useState<RoomState | null>(null);
   const [hostId, setHostId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [chatError, setChatError] = useState<{message: string, remainingMs: number} | null>(null);
-  const socketRef = useRef<Socket | null>(null);
+  const [chatError, setChatError] = useState<{ message: string; remainingMs: number } | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  
   const isUnsyncedRef = useRef(isUnsynced);
+  const isHost = userId === hostId;
 
   useEffect(() => {
     isUnsyncedRef.current = isUnsynced;
   }, [isUnsynced]);
 
+  const handleP2PMessage = useCallback((msg: P2PMessage) => {
+    if (isUnsyncedRef.current) return;
+
+    if (msg.type === 'PLAYHEAD_TICK' && !isHost) {
+      if (onPlayheadTick && typeof msg.payload?.playhead === 'number') {
+        onPlayheadTick(msg.payload.playhead);
+      }
+    } else if (msg.type === 'CHAT_MESSAGE') {
+      const chatMsg = msg.payload as ChatMessage;
+      setMessages((prev) => {
+        if (prev.some(m => m.id === chatMsg.id)) return prev;
+        return [...prev, chatMsg];
+      });
+    } else if (msg.type === 'PEER_REACTION') {
+      if (onPeerReaction && typeof msg.payload?.emoji === 'string') {
+        onPeerReaction(msg.payload.emoji);
+      }
+    }
+  }, [isHost, onPlayheadTick, onPeerReaction]);
+
+  const { p2pStatus, p2pLatencyMs, connectedPeerCount, broadcastP2P } = useP2P(
+    socket,
+    roomId,
+    userId,
+    isHost,
+    handleP2PMessage
+  );
+
   useEffect(() => {
     if (!roomId) return;
 
-    console.log(`[Diagnostic] Attempting Socket.io connection to: ${window.location.origin}`);
-
-    const socket = io(window.location.origin, {
+    const socketUrl = window.location.origin;
+    const newSocket = io(socketUrl, {
       path: '/socket.io/',
-      query: { roomId, userId, username, password, title, correlationId: `ui-${userId}` },
-      transports: ['websocket', 'polling']
+      query: { 
+        roomId, 
+        userId, 
+        username, 
+        password: password || '', 
+        title: title || '', 
+        correlationId: `ui-${userId}-${Date.now()}` 
+      },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000
     });
 
-    socketRef.current = socket;
+    setSocket(newSocket);
 
-    socket.on('connect', () => {
+    newSocket.on('connect', () => {
       setIsConnected(true);
-      console.log(`[Diagnostic] Connected to backend successfully. Socket ID: ${socket.id}, Origin: ${window.location.origin}`);
     });
 
-    socket.on('connect_error', (error) => {
-      console.error('[Diagnostic] Socket connection error:', error, error.message, error.cause);
-    });
-
-    socket.on('disconnect', (reason) => {
+    newSocket.on('disconnect', () => {
       setIsConnected(false);
-      console.warn(`[Diagnostic] Socket disconnected. Reason: ${reason}`);
     });
 
-    socket.on('STATE_SYNC', (data: any) => {
-      console.log('[Diagnostic] Received STATE_SYNC:', data);
-      if (isUnsyncedRef.current) {
-        console.log('[Diagnostic] Blocked STATE_SYNC due to detached mode');
-        return;
-      }
+    newSocket.on('STATE_SYNC', (data: any) => {
+      if (isUnsyncedRef.current) return;
       setRoomState(data.payload);
+      if (data.payload.hostUserId) {
+        setHostId(data.payload.hostUserId);
+      }
     });
 
-    socket.on('ROSTER_UPDATE', (data: any) => {
-      console.log('[Diagnostic] Received ROSTER_UPDATE:', data);
-      setRoomState((prevState) => {
-        if (!prevState) return prevState;
-        return { ...prevState, peers: data.peers };
+    newSocket.on('ROSTER_UPDATE', (data: any) => {
+      setRoomState((prev) => {
+        if (!prev) return prev;
+        return { ...prev, peers: data.peers };
       });
     });
 
-    socket.on('HOST_CHANGED', (data: any) => {
-      console.log('[Diagnostic] Received HOST_CHANGED:', data);
+    newSocket.on('HOST_CHANGED', (data: any) => {
       setHostId(data.hostId);
+      setRoomState((prev) => prev ? { ...prev, hostUserId: data.hostId } : null);
     });
 
-    socket.on('ROOM_MESSAGE', (message: ChatMessage) => {
-      setMessages((prev) => [...prev, message]);
+    newSocket.on('ROOM_MESSAGE', (message: ChatMessage) => {
+      setMessages((prev) => {
+        if (prev.some(m => m.id === message.id)) return prev;
+        return [...prev, message];
+      });
     });
 
-    socket.on('ROOM_CLOSED', (data: any) => {
-      console.log('[Diagnostic] Received ROOM_CLOSED from server:', data.message);
-      if (onRoomClosed) {
-        onRoomClosed(data.message);
-      }
+    newSocket.on('ROOM_CLOSED', (data: any) => {
+      if (onRoomClosed) onRoomClosed(data.message);
     });
 
-    socket.on('ERROR', (data: any) => {
-      console.error('[Diagnostic] Received ERROR from server:', data.message);
-      // For immediate visibility to the user
-      alert(`Muser Server Notice:\n${data.message}`);
+    newSocket.on('ERROR', (data: any) => {
+      setErrorMessage(data.message);
+      setTimeout(() => setErrorMessage(null), 4000);
     });
 
-    socket.on('CHAT_RATE_LIMIT_ERROR', (data: any) => {
+    newSocket.on('CHAT_RATE_LIMIT_ERROR', (data: any) => {
       setChatError({ message: data.message, remainingMs: data.remainingMs });
-      setTimeout(() => {
-        setChatError(null);
-      }, data.remainingMs);
+      setTimeout(() => setChatError(null), data.remainingMs);
     });
 
     return () => {
-      console.log('[Diagnostic] Cleaning up socket connection.');
-      socket.disconnect();
-      setMessages([]);
+      newSocket.disconnect();
+      setSocket(null);
+      setIsConnected(false);
       setRoomState(null);
       setHostId(null);
+      setMessages([]);
     };
-  }, [roomId, userId, username, onRoomClosed]);
+  }, [roomId, userId, username, password, title, onRoomClosed]);
 
   const emitMutation = useCallback((type: string, payload: any = {}) => {
-    if (!socketRef.current || !roomId) {
-        console.warn(`[Diagnostic] Emit aborted. socketRef: ${!!socketRef.current}, roomId: ${roomId}`);
-        return;
-    }
+    if (!socket || !roomId) return;
 
     const mutationData = {
-      action: 'ROOM_MUTATION',
+      action: 'ROOM_MUTATION' as const,
       version: 1,
       correlationId: `ui-${Date.now()}`,
       payload: {
@@ -150,24 +219,38 @@ export function useSocket(roomId: string | null, userId: string, username: strin
       }
     };
 
-    console.log(`[Diagnostic] Emitting ROOM_MUTATION: ${type}`, mutationData);
-    socketRef.current.emit('ROOM_MUTATION' as any, mutationData);
-    console.log(`[Diagnostic] ROOM_MUTATION emit executed for ${type}`);
-  }, [roomId]);
+    socket.emit('ROOM_MUTATION', mutationData as any);
+  }, [socket, roomId]);
 
   const sendMessage = useCallback((text: string) => {
-    if (!socketRef.current || !roomId) return;
-    socketRef.current.emit('SEND_MESSAGE', { roomId, text });
-  }, [roomId]);
+    if (!socket || !roomId) return;
+    socket.emit('SEND_MESSAGE', { roomId, text });
+  }, [socket, roomId]);
+
+  const broadcastPlayheadTick = useCallback((playhead: number) => {
+    if (isHost && isConnected) {
+      broadcastP2P('PLAYHEAD_TICK', { playhead });
+    }
+  }, [isHost, isConnected, broadcastP2P]);
+
+  const broadcastReaction = useCallback((emoji: string) => {
+    broadcastP2P('PEER_REACTION', { emoji });
+  }, [broadcastP2P]);
 
   return {
     isConnected,
     roomState,
     hostId,
-    isHost: userId === hostId,
+    isHost,
     emitMutation,
     messages,
     sendMessage,
-    chatError
+    chatError,
+    errorMessage,
+    p2pStatus,
+    p2pLatencyMs,
+    connectedPeerCount,
+    broadcastPlayheadTick,
+    broadcastReaction
   };
 }

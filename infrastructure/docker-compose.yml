@@ -1,45 +1,32 @@
 services:
-  music-frontend:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-    container_name: muser-music-frontend
-    networks:
-      - muser-net
-    ports:
-      - "8080:8080"
-    depends_on:
-      - sync-backend
-
   sync-backend:
+    image: muser-backend:latest
     build:
       context: ../backend
       dockerfile: Dockerfile
     container_name: muser-sync-backend
-    env_file:
-      - ../.env
+    restart: unless-stopped
     environment:
-      - REDIS_URL=redis://state-cache:6379
       - PORT=3000
-    depends_on:
-      state-cache:
-        condition: service_healthy
+      - NODE_ENV=production
     networks:
       - muser-net
     ports:
       - "3000:3000"
 
-  state-cache:
-    image: redis:7.2-alpine
-    container_name: muser-state-cache
+  music-frontend:
+    image: muser-frontend:latest
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: muser-music-frontend
+    restart: unless-stopped
     networks:
       - muser-net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
+    ports:
+      - "8084:8080"
+    depends_on:
+      - sync-backend
 
 networks:
   muser-net:

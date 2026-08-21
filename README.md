@@ -1,46 +1,75 @@
-# Muser
+# Muser Jam
 
-Muser is a synchronized YouTube audio relay application. It lets multiple clients connect to a central room to listen to YouTube tracks concurrently while maintaining playback state across the network.
+Muser is a synchronized collaborative music session and audio relay platform. It enables friends and devices (PC & mobile) to listen to music concurrently with sub-50ms WebRTC Peer-to-Peer DataChannel synchronization, Spotify Jam-style collaborative queues, track upvoting, ambient visuals, and zero external database dependencies.
 
-## Features
+## ✨ Features
 
-- Synchronized playback using WebSockets to align track time and state across clients
-- Room-based architecture with host controls for queue management and playback authority
-- Detached mode allowing clients to pause or build a local queue without broadcasting state changes to the room
-- Rate limiting on chat and socket events to drop high-frequency spam
-- In-memory state tracking using Redis to cache room metadata
-- Headless playback fallback (Data Saver) that relies on CSS z-index layering to hide the iframe rather than unmounting it, which prevents the YouTube API from throttling
+- **⚡ Direct WebRTC Peer-to-Peer DataChannels**: Ultra-low latency playhead synchronization, playback mutations, and chat transmitted directly between peer devices with automatic WebSocket relay fallback.
+- **🎵 Spotify Jam-Style Collaborative Queue**:
+  - Track upvoting/voting to collaboratively bump popular songs.
+  - "Added by @username" avatar chips on all tracks.
+  - Drag-and-drop & mobile touch reordering.
+  - Host governance modes: Open Jam vs. Restricted / Host-Approval.
+  - Playback history with one-tap re-add.
+- **📱 Mobile-First Responsive Design**:
+  - Full-screen Now Playing card with dynamic ambient glow matching track artwork.
+  - Sticky mini-player with bottom navigation bar for quick queue/search/chat switching.
+  - Camera-scannable QR Code modal for instant mobile phone joining.
+  - Mobile browser audio unlock helper and lockscreen `MediaSession` controls.
+- **🚀 Zero-Redis In-Memory Architecture**: Lightweight, high-performance in-memory room store with automatic TTL decay when sessions end. No Redis daemon or external databases required.
+- **🔍 Instant YouTube Search & Playlist Unrolling**: Fast debounced search with in-memory LRU caching, track duration previews, and channel metadata.
+- **🛡️ Detached & Data Saver Modes**: Independent session listening mode and low-bandwidth background audio rendering.
 
-## Architecture
+## 🛠️ Tech Stack
 
-The backend maps connections to persistent user IDs rather than transient socket IDs. This prevents duplicate client states during browser reloads and allows authority to persist if a host drops and reconnects within the buffer window. 
+- **Frontend**: React 19, Vite, TypeScript, Tailwind CSS, Lucide Icons, WebRTC DataChannels
+- **Backend**: Node.js, Express, Socket.io, TypeScript, Vitest
+- **Infrastructure**: Nginx, Docker / Docker Compose (Redis-free)
 
-State payloads are split. Playback scrub events sync the heavy state timeline, while roster presence and chat events use lightweight channels to avoid unnecessary client re-renders. When a room is empty, a scheduled job cleans the orphaned keys from Redis.
+## 🚀 Quickstart & Development
 
-## Tech Stack
+### 1. Local Development (No Docker Required)
 
-- React 18 / Vite
-- Node.js / Express
-- Socket.io
-- Redis
-- Docker / Docker Compose
-- Nginx
+```bash
+# Start backend (Port 3000)
+cd backend
+npm install
+npm start
 
-## Deployment
+# Start frontend (Port 5173 / dev server)
+cd ../frontend
+npm install --legacy-peer-deps
+npm run dev
+```
 
-The stack runs entirely through Docker Compose. Make sure Docker is installed on your host system.
+### 2. Docker Deployment
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/WilliamAxelC/Muser.git
-   cd Muser/infrastructure
-   ```
+```bash
+cd infrastructure
+docker compose up -d --build
+```
+Access the web application at `http://localhost:8080`.
 
-2. Build and run the containers:
-   ```bash
-   docker compose up -d --build
-   ```
+## 🧪 Testing
 
-3. Access the web interface at `http://localhost:8080`.
+```bash
+# Run unit test suite
+cd backend
+npm test
 
-The default Nginx configuration maps external traffic directly to the React frontend container and proxies `/socket.io` paths to the Node backend.
+# Run multi-client P2P simulation test
+npm run test:simulation
+
+# Verify frontend build & type checks
+cd ../frontend
+npm run build
+npm run lint
+```
+
+## 📚 Technical Documentation
+
+Comprehensive architectural and engineering documentation is available in the [`docs/`](docs/) directory:
+
+- [**System Architecture & Technical Design**](docs/ARCHITECTURE.md): In-memory RoomStore, data models, state synchronization, and component hierarchy.
+- [**WebRTC, Real-Time Networking & Security**](docs/NETWORKING_AND_P2P.md): Deep-dive on DTLS, SCTP, SDP/ICE, STUN vs TURN, and Token-Bucket rate limiting.
+- [**QA Audit & Performance Optimizations**](docs/QA_AUDIT_AND_INEFFICIENCIES.md): High-priority performance bottlenecks, GPU rendering fixes, and memory optimizations.

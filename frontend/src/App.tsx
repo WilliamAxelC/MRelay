@@ -1,25 +1,38 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSocket } from './hooks/useSocket';
+import type { QueueItem } from './hooks/useSocket';
 import { cn } from './lib/utils';
-import { Play, Pause, SkipForward, Radio, LogOut, Settings, Share2, Check, MessageSquare, ListMusic, VolumeX, Headphones, Menu, X, ChevronRight, Crown, Users, RotateCcw, Link2, Globe, ShieldCheck, Repeat, Repeat1, PictureInPicture } from 'lucide-react';
-import { usePiP } from './hooks/usePiP';
+import { 
+  Radio, LogOut, Settings, 
+  Users, RotateCcw, Link2, Globe, 
+  QrCode, X, Maximize2, Moon, Bookmark, HelpCircle, Wand2,
+  Heart
+} from 'lucide-react';
 import { YouTubePlayer } from './components/YouTubePlayer';
 import type { YouTubePlayerRef } from './components/YouTubePlayer';
-import { ChatView } from './components/ChatView';
+import { NowPlayingCard } from './components/NowPlayingCard';
 import { QueueView } from './components/QueueView';
+import { ChatView } from './components/ChatView';
 import { MediaIngestionForm } from './components/MediaIngestionForm';
+import { ShareModal } from './components/ShareModal';
+import { UserRosterModal } from './components/UserRosterModal';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import type { MobileTab } from './components/MobileBottomNav';
+import { FloatingReactions } from './components/FloatingReactions';
+import type { FloatingReactionsRef } from './components/FloatingReactions';
+import { FullscreenPlayer } from './components/FullscreenPlayer';
+import { PlaylistDrawer } from './components/PlaylistDrawer';
+import { SleepTimerModal } from './components/SleepTimerModal';
+import { ShortcutHelpModal } from './components/ShortcutHelpModal';
+import { LyricsDrawer } from './components/LyricsDrawer';
+import { LikedSongsModal } from './components/LikedSongsModal';
+import type { LikedTrack } from './components/LikedSongsModal';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
-const ErrorToast = ({ message, onClose }: { message: string, onClose: () => void }) => (
-  <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[60] animate-in fade-in slide-in-from-top-4 duration-300">
-    <div className="bg-red-600 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-red-500/50">
-      <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center font-bold text-xs">!</div>
-      <span className="text-sm font-bold tracking-tight">{message}</span>
-      <button onClick={onClose} className="ml-2 hover:opacity-50"><X className="w-4 h-4" /></button>
-    </div>
-  </div>
-);
+const PLAYBACK_RATES = [0.75, 0.85, 1.0, 1.15, 1.25, 1.5];
+const LIKED_STORAGE_KEY = 'muser_liked_tracks';
 
-function App() {
+export function App() {
   const [userId] = useState(() => {
     const saved = localStorage.getItem('muser_user_id');
     if (saved) return saved;
@@ -27,23 +40,44 @@ function App() {
     localStorage.setItem('muser_user_id', newId);
     return newId;
   });
-  
+
   const [username, setUsername] = useState(() => {
-    return localStorage.getItem('muser_username') || `Guest_${userId.substr(5, 4)}`;
+    return localStorage.getItem('muser_username') || `Guest_${userId.substring(5, 9)}`;
   });
 
   const [inputRoomId, setInputRoomId] = useState('');
-  const [pendingShareUrl, setPendingShareUrl] = useState<string | null>(null);
-  const pipControls = usePiP();
-  const isAppPiP = pipControls.isAppPiP;
-  const setIsAppPiP = pipControls.setIsAppPiP;
   const [activeRoomId, setActiveRoomId] = useState<string | null>(() => {
     const match = window.location.pathname.match(/^\/room\/([A-Za-z0-9_-]+)/);
     return match ? match[1].toUpperCase() : null;
   });
-  const [volume, setVolume] = useState(50);
+
+  const [volume, setVolume] = useState(65);
+  const [playbackRate, setPlaybackRate] = useState(1.0);
   const [dataSaver, setDataSaver] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [showRosterModal, setShowRosterModal] = useState(false);
+  const [showFullscreen, setShowFullscreen] = useState(false);
+  const [showPlaylistDrawer, setShowPlaylistDrawer] = useState(false);
+  const [showSleepTimer, setShowSleepTimer] = useState(false);
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
+  const [showLikedSongs, setShowLikedSongs] = useState(false);
+
+  const [likedTrackIds, setLikedTrackIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(LIKED_STORAGE_KEY);
+      if (saved) {
+        const arr: LikedTrack[] = JSON.parse(saved);
+        return new Set(arr.map(t => t.videoId));
+      }
+    } catch {}
+    return new Set();
+  });
+
+  const [sleepTimerSeconds, setSleepTimerSeconds] = useState<number | null>(null);
+  const [sleepTimerTargetTrack, setSleepTimerTargetTrack] = useState<string | null>(null);
+
   const [editTitle, setEditTitle] = useState('');
   const [chatMaxTokens, setChatMaxTokens] = useState(3);
   const [chatInterval, setChatInterval] = useState(5);
@@ -51,33 +85,18 @@ function App() {
   const [publicRoomsFilter, setPublicRoomsFilter] = useState('');
   const [isRefreshingRooms, setIsRefreshingRooms] = useState(false);
   const [roomTitleInput, setRoomTitleInput] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [mobileTab, setMobileTab] = useState<'queue' | 'chat'>('chat');
-  const [audioMode, setAudioMode] = useState<'sync' | 'passive'>('sync');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [showUserList, setShowUserList] = useState(false);
-  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const [mobileTab, setMobileTab] = useState<MobileTab>('now-playing');
   const [isCreatingPublic, setIsCreatingPublic] = useState(true);
   const [isUnsynced, setIsUnsynced] = useState(false);
-  const prevUnsyncedRef = useRef(false);
+  const [audioUnlocked, setAudioUnlocked] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [totalDuration, setTotalDuration] = useState(0);
+  const [publicRooms, setPublicRooms] = useState<any[]>([]);
 
-  React.useEffect(() => {
-    if (errorToast) {
-      const timer = setTimeout(() => setErrorToast(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [errorToast]);
+  const ytPlayerRef = useRef<YouTubePlayerRef>(null);
+  const floatingReactionsRef = useRef<FloatingReactionsRef>(null);
 
-  // Phase 3.2: Removed Active Tab Eviction Guard as part of new architecture
-
-  const handleCopyLink = () => {
-    const link = `${window.location.origin}/room/${activeRoomId?.toLowerCase()}`;
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  React.useEffect(() => {
+  useEffect(() => {
     if (activeRoomId) {
       window.history.replaceState({}, '', `/room/${activeRoomId.toLowerCase()}`);
     } else {
@@ -85,88 +104,209 @@ function App() {
     }
   }, [activeRoomId]);
 
-  const handleRoomClosed = React.useCallback((message: string) => {
-    setErrorToast(message);
+  const handleRoomClosed = useCallback((message: string) => {
+    alert(message);
     setActiveRoomId(null);
   }, []);
 
-  React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const sharedText = params.get('text');
-    const sharedUrl = params.get('url');
-    const possibleUrl = sharedText || sharedUrl;
-
-    if (possibleUrl) {
-      // Remove params from URL to prevent loop
-      window.history.replaceState({}, '', window.location.pathname);
-      
-      const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|music\.youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/;
-      const match = possibleUrl.match(regex);
-      if (match && match[1]) {
-        setPendingShareUrl(possibleUrl);
-      }
-    }
+  const handlePlayheadTick = useCallback((playhead: number) => {
+    setCurrentTime(playhead);
   }, []);
 
-  const { isConnected, roomState, isHost, emitMutation, messages, sendMessage, chatError } = useSocket(activeRoomId, userId, username, roomPassword, roomTitleInput, isUnsynced, handleRoomClosed);
-  const ytPlayerRef = useRef<YouTubePlayerRef>(null);
+  const handlePeerReaction = useCallback((emoji: string) => {
+    floatingReactionsRef.current?.spawnReaction(emoji);
+  }, []);
 
-  const [detachedQueue, setDetachedQueue] = useState<{ videoId: string; title: string }[]>([]);
-  const [detachedCurrentTrackId, setDetachedCurrentTrackId] = useState<string | null>(null);
-  const [detachedIsPlaying, setDetachedIsPlaying] = useState(false);
-  const [showWarningBanner, setShowWarningBanner] = useState(false);
+  const {
+    roomState,
+    isHost,
+    emitMutation,
+    messages,
+    sendMessage,
+    chatError,
+    p2pStatus,
+    p2pLatencyMs,
+    broadcastPlayheadTick,
+    broadcastReaction
+  } = useSocket(
+    activeRoomId,
+    userId,
+    username,
+    roomPassword,
+    roomTitleInput,
+    isUnsynced,
+    handleRoomClosed,
+    handlePlayheadTick,
+    handlePeerReaction
+  );
+
+  const handleLocalReaction = useCallback((emoji: string) => {
+    floatingReactionsRef.current?.spawnReaction(emoji);
+    broadcastReaction(emoji);
+  }, [broadcastReaction]);
 
   useEffect(() => {
-    if (showSettings) {
-      setEditTitle(roomState?.title || '');
-      setChatMaxTokens(roomState?.chatRateLimit?.maxTokens ?? 3);
-      setChatInterval(roomState?.chatRateLimit ? roomState.chatRateLimit.intervalMs / 1000 : 5);
+    if (showSettings && roomState) {
+      setEditTitle(roomState.title || '');
+      setChatMaxTokens(roomState.chatRateLimit?.maxTokens ?? 3);
+      setChatInterval(roomState.chatRateLimit ? roomState.chatRateLimit.intervalMs / 1000 : 5);
     }
-  }, [showSettings, roomState?.title, roomState?.chatRateLimit]);
+  }, [showSettings, roomState]);
 
-  // Phase 5: Prevent State Bleed on New Room
+  // Host playhead broadcast over P2P DataChannel
   useEffect(() => {
-    setRoomPassword('');
-    setRoomTitleInput('');
-    setIsUnsynced(false);
-    setDetachedQueue([]);
-    setDetachedCurrentTrackId(null);
-    setDetachedIsPlaying(false);
-    setShowWarningBanner(false);
-  }, [activeRoomId]);
+    if (!isHost || !roomState?.isPlaying || !activeRoomId) return;
 
-  // Phase 1: Local Session State Buckets & Catch-up re-synchronization
-  useEffect(() => {
-    if (isUnsynced && !prevUnsyncedRef.current) {
-      // User just toggled to DETACHED - fork state
-      setDetachedQueue([...(roomState?.queue || [])]);
-      setDetachedCurrentTrackId(roomState?.currentTrackId || null);
-      setDetachedIsPlaying(roomState?.isPlaying || false);
-      setShowWarningBanner(true);
-    } else if (prevUnsyncedRef.current === true && isUnsynced === false) {
-      // User just toggled back to SYNCED - snap to master timeline
-      if (roomState && ytPlayerRef.current) {
-        const networkDriftOffset = (Date.now() - (roomState.updatedAt || Date.now())) / 1000;
-        const masterPlayhead = (roomState.currentPlayhead || 0) + (roomState.isPlaying ? networkDriftOffset : 0);
-        const safeTarget = Math.max(0, masterPlayhead);
-        try {
-          (ytPlayerRef.current as any).getCurrentTime; // access check
-          // Force player re-sync by updating playhead state indirectly
-          emitMutation('ROOM_RESYNC', { playhead: safeTarget });
-        } catch (err) {
-          console.error('[Re-Sync] Failed to snap playhead on re-sync', err);
+    const interval = setInterval(() => {
+      if (ytPlayerRef.current) {
+        const cur = ytPlayerRef.current.getCurrentTime();
+        if (cur > 0) {
+          broadcastPlayheadTick(cur);
         }
       }
+    }, 400);
+
+    return () => clearInterval(interval);
+  }, [isHost, roomState?.isPlaying, activeRoomId, broadcastPlayheadTick]);
+
+  // Sleep Timer Countdown & Fade-out Effect
+  useEffect(() => {
+    if (sleepTimerSeconds === null || sleepTimerSeconds <= 0) return;
+
+    const interval = setInterval(() => {
+      setSleepTimerSeconds((prev) => {
+        if (prev === null || prev <= 1) {
+          if (isHost) emitMutation('PAUSE');
+          return null;
+        }
+        if (prev <= 20) {
+          const faded = Math.max(0, Math.floor((prev / 20) * 60));
+          setVolume(faded);
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sleepTimerSeconds, isHost, emitMutation]);
+
+  // End of Track Sleep Timer
+  useEffect(() => {
+    if (sleepTimerTargetTrack && roomState?.currentTrackId && roomState.currentTrackId !== sleepTimerTargetTrack) {
+      if (isHost) emitMutation('PAUSE');
+      setSleepTimerTargetTrack(null);
     }
-    if (prevUnsyncedRef.current !== isUnsynced) {
-      emitMutation('SET_PEER_STATUS', { isDetached: isUnsynced });
+  }, [roomState?.currentTrackId, sleepTimerTargetTrack, isHost, emitMutation]);
+
+  const handleSetSleepTimer = (minutes: number | 'end_of_track') => {
+    if (minutes === 'end_of_track') {
+      setSleepTimerTargetTrack(roomState?.currentTrackId || 'active');
+      setSleepTimerSeconds(null);
+    } else {
+      setSleepTimerSeconds(minutes * 60);
+      setSleepTimerTargetTrack(null);
     }
-    prevUnsyncedRef.current = isUnsynced;
-  }, [isUnsynced, roomState, emitMutation]);
+  };
+
+  const handleCancelSleepTimer = () => {
+    setSleepTimerSeconds(null);
+    setSleepTimerTargetTrack(null);
+  };
+
+  const handleCyclePlaybackRate = () => {
+    const nextIdx = (PLAYBACK_RATES.indexOf(playbackRate) + 1) % PLAYBACK_RATES.length;
+    const nextRate = PLAYBACK_RATES[nextIdx];
+    setPlaybackRate(nextRate);
+    if (ytPlayerRef.current?.setPlaybackRate) {
+      ytPlayerRef.current.setPlaybackRate(nextRate);
+    }
+  };
+
+  const handleToggleLikeCurrentTrack = () => {
+    if (!roomState?.currentTrackId) return;
+    const vId = roomState.currentTrackId;
+
+    try {
+      const saved = localStorage.getItem(LIKED_STORAGE_KEY);
+      let arr: LikedTrack[] = saved ? JSON.parse(saved) : [];
+
+      if (likedTrackIds.has(vId)) {
+        arr = arr.filter(t => t.videoId !== vId);
+        setLikedTrackIds(new Set(arr.map(t => t.videoId)));
+      } else {
+        const newLiked: LikedTrack = {
+          videoId: vId,
+          title: roomState.currentTitle || 'Unknown Track',
+          author: roomState.currentAuthor,
+          duration: roomState.currentDuration,
+          likedAt: Date.now()
+        };
+        arr = [newLiked, ...arr];
+        setLikedTrackIds(new Set(arr.map(t => t.videoId)));
+      }
+
+      localStorage.setItem(LIKED_STORAGE_KEY, JSON.stringify(arr));
+    } catch {}
+  };
+
+  const fetchPublicRooms = useCallback(() => {
+    setIsRefreshingRooms(true);
+    fetch('/api/rooms')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.rooms) setPublicRooms(data.rooms);
+      })
+      .catch((err) => console.error(err))
+      .finally(() => setTimeout(() => setIsRefreshingRooms(false), 500));
+  }, []);
+
+  useEffect(() => {
+    if (!activeRoomId) {
+      fetchPublicRooms();
+    }
+  }, [activeRoomId, fetchPublicRooms]);
+
+  // Lockscreen MediaSession API Integration
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      const trackTitle = roomState?.currentTitle || roomState?.title || 'Muser Jam';
+      const authorName = roomState?.currentAuthor || activeRoomId || 'Collaborative Music';
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: trackTitle,
+        artist: authorName,
+        album: 'Muser Jam Session',
+        artwork: roomState?.currentTrackId
+          ? [
+              {
+                src: `https://img.youtube.com/vi/${roomState.currentTrackId}/hqdefault.jpg`,
+                sizes: '480x360',
+                type: 'image/jpeg'
+              }
+            ]
+          : []
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => emitMutation('PLAY'));
+      navigator.mediaSession.setActionHandler('pause', () => emitMutation('PAUSE'));
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        if (isHost) emitMutation('SKIP');
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        if (isHost) emitMutation('BACK');
+      });
+      navigator.mediaSession.playbackState = roomState?.isPlaying ? 'playing' : 'paused';
+    }
+  }, [roomState?.title, roomState?.currentTitle, roomState?.currentAuthor, roomState?.currentTrackId, roomState?.isPlaying, activeRoomId, isHost, emitMutation]);
 
   const handleNameChange = (newName: string) => {
     setUsername(newName);
     localStorage.setItem('muser_username', newName);
+  };
+
+  const handleCreateRoom = () => {
+    const newRoomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    setActiveRoomId(newRoomId);
   };
 
   const handleJoin = (e: React.FormEvent) => {
@@ -176,68 +316,46 @@ function App() {
     }
   };
 
-  const handleIngest = async (input: string, playNext?: boolean) => {
+  const handleLeave = () => {
+    setActiveRoomId(null);
+    setInputRoomId('');
+  };
+
+  const handleIngest = async (urlOrItem: string | any, playNext?: boolean) => {
     try {
-      if (input.startsWith('playlist:')) {
-        const id = input.replace('playlist:', '');
-        emitMutation('QUEUE_PLAYLIST_REQUEST', { playlistId: id });
+      if (typeof urlOrItem === 'object') {
+        emitMutation('QUEUE_ADD', {
+          item: urlOrItem,
+          ...(playNext ? { index: 0 } : {})
+        });
         return;
       }
 
-      // Playlist extractor
+      const input = urlOrItem.trim();
+
       const listRegex = /[?&]list=([a-zA-Z0-9_-]+)/;
       const listMatch = input.match(listRegex);
-
       if (listMatch) {
-        const playlistId = listMatch[1];
-        if (isUnsynced) {
-          try {
-            const res = await fetch(`/api/playlist?id=${playlistId}`);
-            if (res.ok) {
-              const data = await res.json();
-              setDetachedQueue((prev) => [...prev, ...data.items.map((i: any) => ({ videoId: i.id, title: i.title }))]);
-            } else {
-              throw new Error('Failed to unroll playlist locally');
-            }
-          } catch (e: any) {
-            setErrorToast(e.message || 'Error fetching playlist');
-          }
-        } else {
-          emitMutation('QUEUE_PLAYLIST_REQUEST', { playlistId });
-        }
+        emitMutation('QUEUE_PLAYLIST_REQUEST', { playlistId: listMatch[1] });
         return;
       }
 
-      // Single Video ID extractor
       const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|music\.youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/;
       const match = input.match(regex);
       const videoId = match ? match[1] : (input.length === 11 ? input : null);
-      
+
       if (videoId) {
-        if (isUnsynced) {
-          if (playNext) {
-            setDetachedQueue((prev) => [{ videoId, title: 'Local Track' }, ...prev]);
-          } else {
-            setDetachedQueue((prev) => [...prev, { videoId, title: 'Local Track' }]);
-          }
-        } else {
-          emitMutation('QUEUE_ADD', { item: videoId, ...(playNext ? { index: 0 } : {}) });
-        }
+        emitMutation('QUEUE_ADD', {
+          item: videoId,
+          ...(playNext ? { index: 0 } : {})
+        });
       } else {
-        throw new Error('Invalid Media Link or ID');
+        throw new Error('Invalid YouTube link or track ID');
       }
     } catch (err: any) {
-      console.error('[Ingestion Engine Error]', err);
-      setErrorToast(err.message || 'Media ingestion failed');
+      alert(err.message || 'Media ingestion failed');
     }
   };
-
-  React.useEffect(() => {
-    if (activeRoomId && pendingShareUrl && isConnected) {
-      handleIngest(pendingShareUrl);
-      setPendingShareUrl(null);
-    }
-  }, [activeRoomId, pendingShareUrl, isConnected]);
 
   const handlePlayerStateChange = (state: { isPlaying: boolean; playhead: number; isEnded?: boolean }) => {
     if (isUnsynced) return;
@@ -248,528 +366,751 @@ function App() {
     }
   };
 
-  React.useEffect(() => {
-    if ('mediaSession' in navigator) {
-      let currentTrackTitle = roomState?.title || 'Muser Sync';
+  const handleTimeUpdate = (curTime: number, dur: number) => {
+    setCurrentTime(curTime);
+    if (dur > 0) setTotalDuration(dur);
+  };
+
+  const handleSeek = (seconds: number) => {
+    if (ytPlayerRef.current) {
+      ytPlayerRef.current.seekTo(seconds);
+    }
+    emitMutation('SEEK', { playhead: seconds });
+  };
+
+  const handleToggleRepeat = () => {
+    if (!isHost) return;
+    const current = roomState?.repeatMode || 'off';
+    const next = current === 'off' ? 'track' : current === 'track' ? 'queue' : 'off';
+    emitMutation('SET_REPEAT_MODE', { repeatMode: next });
+  };
+
+  const handleTransferHost = (targetUserId: string) => {
+    emitMutation('TRANSFER_AUTHORITY', { targetUserId });
+  };
+
+  const handleUnlockAudio = () => {
+    if (ytPlayerRef.current) {
+      ytPlayerRef.current.unmuteAudio();
+    }
+    setAudioUnlocked(true);
+  };
+
+  const handleLoadSavedPlaylist = (tracks: QueueItem[], mode: 'append' | 'replace') => {
+    if (mode === 'replace') {
+      emitMutation('QUEUE_CLEAR');
+    }
+    emitMutation('QUEUE_BATCH_APPEND', { items: tracks });
+    setShowPlaylistDrawer(false);
+  };
+
+  const handleQueueLikedTrack = (item: QueueItem, playNext?: boolean) => {
+    handleIngest(item, playNext);
+  };
+
+  const handleQueueAllLiked = (items: QueueItem[]) => {
+    emitMutation('QUEUE_BATCH_APPEND', { items });
+    setShowLikedSongs(false);
+  };
+
+  // Keyboard Shortcuts Hook
+  useKeyboardShortcuts({
+    onTogglePlay: () => {
       if (roomState?.currentTrackId) {
-        const found = roomState.queue?.find(q => q.videoId === roomState.currentTrackId) 
-                   || roomState.history?.find(q => q.videoId === roomState.currentTrackId);
-        if (found) currentTrackTitle = found.title;
+        emitMutation(roomState.isPlaying ? 'PAUSE' : 'PLAY', { playhead: currentTime });
       }
+    },
+    onSeekBackward: () => handleSeek(Math.max(0, currentTime - 10)),
+    onSeekForward: () => handleSeek(Math.min(totalDuration || 9999, currentTime + 10)),
+    onNext: () => { if (isHost) emitMutation('SKIP'); },
+    onPrev: () => { if (isHost) emitMutation('BACK'); },
+    onToggleMute: () => setVolume((v) => (v === 0 ? 65 : 0)),
+    onToggleFullscreen: () => setShowFullscreen((f) => !f),
+    onToggleRepeat: handleToggleRepeat,
+    onShuffle: () => { if (isHost) emitMutation('QUEUE_SHUFFLE'); },
+    onShowHelp: () => setShowShortcutHelp((h) => !h)
+  }, !activeRoomId);
 
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: currentTrackTitle,
-        artist: activeRoomId || 'Stream',
-        album: 'Collaborative Music',
-        artwork: roomState?.currentTrackId ? [
-          { src: `https://img.youtube.com/vi/${roomState.currentTrackId}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' }
-        ] : []
-      });
-      
-      navigator.mediaSession.setActionHandler('play', () => emitMutation('PLAY'));
-      navigator.mediaSession.setActionHandler('pause', () => emitMutation('PAUSE'));
-      navigator.mediaSession.setActionHandler('nexttrack', () => { if (isHost) emitMutation('SKIP'); });
-      navigator.mediaSession.playbackState = roomState?.isPlaying ? 'playing' : 'paused';
-    }
-  }, [roomState?.title, roomState?.isPlaying, roomState?.currentTrackId, roomState?.queue, roomState?.history, activeRoomId, emitMutation, isHost]);
-
-  const [publicRooms, setPublicRooms] = useState<{roomId: string, title?: string, updatedAt: number}[]>([]);
-
-  const fetchPublicRooms = () => {
-    setIsRefreshingRooms(true);
-    fetch('/api/rooms').then(res => res.json()).then(data => {
-      if (data.rooms) setPublicRooms(data.rooms);
-    }).catch(err => console.error(err))
-      .finally(() => setTimeout(() => setIsRefreshingRooms(false), 500));
-  };
-
-  React.useEffect(() => {
-    if (!activeRoomId) {
-      fetchPublicRooms();
-    }
-  }, [activeRoomId]);
-
-  const handleLeave = () => {
-    setActiveRoomId(null);
-    setInputRoomId('');
-  };
-
-  const handleCreateRoom = () => {
-    const newRoomId = Math.random().toString(36).substr(2, 6).toUpperCase();
-    setActiveRoomId(newRoomId);
-  };
-
-  React.useEffect(() => {
-    if (activeRoomId && isConnected && isHost) {
-        emitMutation('SET_PUBLIC', { isPublic: isCreatingPublic });
-    }
-  }, [activeRoomId, isConnected, isHost]);
-
+  // --- LOBBY VIEW ---
   if (!activeRoomId) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 bg-black overflow-y-auto relative">
-        {errorToast && <ErrorToast message={errorToast} onClose={() => setErrorToast(null)} />}
-        <div className="max-w-6xl w-full mx-auto px-4 py-6 md:py-12 space-y-8 md:space-y-12">
-          <div className="flex items-center justify-center gap-3 md:gap-4">
-             <div className="inline-flex items-center justify-center w-10 h-10 md:w-14 md:h-14 rounded-xl md:rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl shrink-0">
-                <Radio className="w-5 h-5 md:w-7 md:h-7 text-blue-500 animate-pulse" />
-             </div>
-             <div>
-               <h1 className="text-2xl md:text-4xl font-black tracking-tighter text-white uppercase italic leading-none">Muser</h1>
-               <p className="hidden md:block text-zinc-500 text-sm font-medium tracking-tight mt-0.5">Collaborative Sync-Stream Protocol</p>
-             </div>
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4 md:p-8 relative overflow-y-auto selection:bg-emerald-500 selection:text-black">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="max-w-5xl w-full mx-auto space-y-10 py-8 relative z-10">
+          <div className="flex flex-col items-center text-center space-y-3">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-zinc-900 border border-zinc-800 shadow-2xl shadow-emerald-500/10">
+              <Radio className="w-8 h-8 text-emerald-400 animate-pulse" />
+            </div>
+            <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white uppercase italic">
+              Muser <span className="text-emerald-400">Jam</span>
+            </h1>
+            <p className="text-zinc-400 text-sm max-w-md font-medium">
+              Synchronized collaborative music sessions with instant WebRTC peer-to-peer playback across Phone & PC.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Column Box A (lg:col-span-4): Global Identity Profile card */}
-            <div className="lg:col-span-4 space-y-6">
-              <div className="bg-zinc-900/30 border border-zinc-800/80 p-8 rounded-3xl shadow-2xl backdrop-blur-md space-y-6 h-full">
-                <div className="flex items-center gap-3">
-                  <Users className="w-4 h-4 text-blue-500" />
-                  <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Profile</h3>
+            <div className="lg:col-span-4 bg-zinc-950/80 border border-zinc-800/80 p-6 md:p-8 rounded-3xl shadow-2xl backdrop-blur-xl flex flex-col justify-between space-y-6">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <Users className="w-4 h-4 text-emerald-400" />
+                  <h3 className="text-xs font-black text-white uppercase tracking-widest">Your Identity</h3>
                 </div>
-                <div className="space-y-2">
-                  <label htmlFor="username" className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest ml-1">Display Name</label>
-                  <input id="username" type="text" value={username} onChange={(e) => handleNameChange(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800/50 rounded-2xl px-6 py-4 text-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-900/50 transition-all placeholder:text-zinc-800 text-white" />
+                <div className="space-y-1.5">
+                  <label htmlFor="username" className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">
+                    Display Name
+                  </label>
+                  <input
+                    id="username"
+                    type="text"
+                    value={username}
+                    onChange={(e) => handleNameChange(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500/80 transition-all placeholder:text-zinc-600"
+                  />
                 </div>
-                <p className="text-[10px] text-zinc-600 font-medium leading-relaxed">Your identity is persisted locally and broadcast to all connected peer nodes in real-time.</p>
               </div>
+              <p className="text-[11px] text-zinc-500 leading-relaxed">
+                Your profile is saved locally and instantly shared with peers when joining a jam session.
+              </p>
             </div>
 
-            {/* Column Box B (lg:col-span-8): Create New Room and Join cards */}
-            <div className="lg:col-span-8 space-y-8">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {/* Card B: Provisioning Matrix (Create) */}
-                <div className="bg-zinc-900/30 border border-zinc-800/80 p-8 rounded-3xl shadow-2xl backdrop-blur-md space-y-8 flex flex-col">
-                  <div className="flex items-center gap-3">
-                    <Globe className="w-4 h-4 text-emerald-500" />
-                    <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Create New Room</h3>
+            <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-zinc-950/80 border border-zinc-800/80 p-6 md:p-8 rounded-3xl shadow-2xl backdrop-blur-xl flex flex-col justify-between space-y-6">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2.5">
+                    <Globe className="w-4 h-4 text-emerald-400" />
+                    <h3 className="text-xs font-black text-white uppercase tracking-widest">Start New Jam</h3>
                   </div>
-                  
-                  <div className="space-y-6 flex-1">
-                    <div className="space-y-2">
-                      <label htmlFor="room-title" className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest ml-1">Room Title</label>
-                      <input id="room-title" type="text" placeholder="THE SYNC MATRIX" value={roomTitleInput} onChange={(e) => setRoomTitleInput(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800/50 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900/50 transition-all placeholder:text-zinc-800 text-white" />
+
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Session Title</label>
+                      <input
+                        type="text"
+                        placeholder="Late Night Vibes..."
+                        value={roomTitleInput}
+                        onChange={(e) => setRoomTitleInput(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-xs font-medium text-white focus:outline-none focus:border-emerald-500/80 transition-all placeholder:text-zinc-600"
+                      />
                     </div>
 
-                    <div className="flex items-center justify-between bg-zinc-950/50 p-4 rounded-2xl border border-zinc-800/50">
+                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-2xl border border-zinc-800">
                       <div>
-                        <div className="text-sm font-bold text-white">Public Room</div>
-                        <div className="text-[9px] text-zinc-600 uppercase tracking-tighter">Visible in the room browser</div>
+                        <div className="text-xs font-bold text-white">Public Session</div>
+                        <div className="text-[10px] text-zinc-500">Show in public browser</div>
                       </div>
-                      <button onClick={() => setIsCreatingPublic(!isCreatingPublic)} className={cn("w-12 h-6 rounded-full transition-all relative", isCreatingPublic ? "bg-blue-600" : "bg-zinc-800")}>
-                        <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-all", isCreatingPublic ? "right-1" : "left-1")} />
+                      <button
+                        onClick={() => setIsCreatingPublic(!isCreatingPublic)}
+                        className={cn(
+                          "w-11 h-6 rounded-full transition-all relative",
+                          isCreatingPublic ? "bg-emerald-500" : "bg-zinc-800"
+                        )}
+                      >
+                        <div className={cn("w-4 h-4 bg-black rounded-full absolute top-1 transition-all", isCreatingPublic ? "right-1" : "left-1")} />
                       </button>
                     </div>
+                  </div>
+                </div>
 
-                    <div className="space-y-2">
-                      <label htmlFor="create-password" className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest ml-1">Room Password (Optional)</label>
-                      <input id="create-password" type="password" placeholder="••••••••" value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800/50 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900/50 transition-all placeholder:text-zinc-800 text-white" />
+                <button
+                  onClick={handleCreateRoom}
+                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-widest rounded-2xl transition-all active:scale-98 shadow-xl shadow-emerald-500/20"
+                >
+                  Create Session
+                </button>
+              </div>
+
+              <div className="bg-zinc-950/80 border border-zinc-800/80 p-6 md:p-8 rounded-3xl shadow-2xl backdrop-blur-xl flex flex-col justify-between space-y-6">
+                <form onSubmit={handleJoin} className="space-y-4">
+                  <div className="flex items-center gap-2.5">
+                    <Link2 className="w-4 h-4 text-blue-400" />
+                    <h3 className="text-xs font-black text-white uppercase tracking-widest">Join Session</h3>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Room Code</label>
+                      <input
+                        type="text"
+                        placeholder="CODE"
+                        value={inputRoomId}
+                        onChange={(e) => setInputRoomId(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 font-mono tracking-widest uppercase text-sm font-black text-white focus:outline-none focus:border-blue-500/80 transition-all placeholder:text-zinc-700"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Password (If Protected)</label>
+                      <input
+                        type="password"
+                        placeholder="••••••••"
+                        value={roomPassword}
+                        onChange={(e) => setRoomPassword(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-xs text-white focus:outline-none focus:border-blue-500/80 transition-all placeholder:text-zinc-700"
+                      />
                     </div>
                   </div>
 
-                  <button onClick={handleCreateRoom} className="w-full bg-white text-black font-black py-5 rounded-[1.5rem] hover:bg-zinc-200 active:scale-[0.98] transition-all shadow-xl uppercase tracking-widest text-xs mt-6">Create Room</button>
-                </div>
-
-                {/* Card C: Port Ingress (Join) */}
-                <div className="bg-zinc-900/30 border border-zinc-800/80 p-8 rounded-3xl shadow-2xl backdrop-blur-md space-y-8 flex flex-col">
-                  <div className="flex items-center gap-3">
-                    <Link2 className="w-4 h-4 text-blue-500" />
-                    <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Join Existing Room</h3>
-                  </div>
-
-                  <form onSubmit={handleJoin} className="space-y-6 flex-1 flex flex-col">
-                    <div className="space-y-2">
-                       <label htmlFor="room-id" className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest ml-1">Room Code</label>
-                       <input id="room-id" type="text" placeholder="CODE" value={inputRoomId} onChange={(e) => setInputRoomId(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800/50 rounded-2xl px-6 py-4 font-mono tracking-[0.3em] focus:outline-none focus:ring-2 focus:ring-blue-900/50 transition-all placeholder:text-zinc-800 uppercase text-white" />
-                    </div>
-                    
-                    <div className="space-y-2 flex-1">
-                       <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest ml-1">Room Password</label>
-                       <input type="password" placeholder="••••••••" value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800/50 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900/50 transition-all placeholder:text-zinc-800 text-white" />
-                    </div>
-                    
-                    <button type="submit" className="w-full bg-blue-600 text-white font-black py-5 rounded-[1.5rem] hover:bg-blue-500 active:scale-[0.98] transition-all shadow-xl uppercase tracking-widest text-xs mt-6">Join Room</button>
-                  </form>
-                </div>
+                  <button
+                    type="submit"
+                    className="w-full py-4 bg-white hover:bg-zinc-200 text-black font-black text-xs uppercase tracking-widest rounded-2xl transition-all active:scale-98 shadow-xl mt-4"
+                  >
+                    Connect
+                  </button>
+                </form>
               </div>
             </div>
           </div>
-          
-          <div className="space-y-6 pt-8 border-t border-zinc-900">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <h3 className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.3em]">Public Rooms</h3>
-              <div className="flex items-center gap-3 w-full sm:w-auto">
-                <input type="text" placeholder="SEARCH ROOMS..." value={publicRoomsFilter} onChange={(e) => setPublicRoomsFilter(e.target.value)} className="bg-zinc-950 border border-zinc-800/80 rounded-xl px-4 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-900/50 transition-all placeholder:text-zinc-700 text-white w-full sm:w-48 uppercase font-mono tracking-widest" />
-                <button onClick={fetchPublicRooms} className="text-[10px] font-black bg-zinc-900 hover:bg-zinc-800 text-zinc-400 px-3 py-2 rounded-xl border border-zinc-800 transition-all uppercase tracking-widest flex items-center gap-2 shrink-0">
-                  <RotateCcw className={cn("w-3 h-3 transition-transform duration-500 ease-in-out", isRefreshingRooms && "animate-spin [animation-direction:reverse]")} /> Refresh
+
+          <div className="space-y-4 pt-6 border-t border-zinc-900">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Active Public Jams</h3>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Filter sessions..."
+                  value={publicRoomsFilter}
+                  onChange={(e) => setPublicRoomsFilter(e.target.value)}
+                  className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/60"
+                />
+                <button
+                  onClick={fetchPublicRooms}
+                  className="p-2 bg-zinc-900 hover:bg-zinc-800 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                  title="Refresh"
+                >
+                  <RotateCcw className={cn("w-3.5 h-3.5", isRefreshingRooms && "animate-spin")} />
                 </button>
               </div>
             </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-               {publicRooms.filter(r => (r.title || r.roomId).toLowerCase().includes(publicRoomsFilter.toLowerCase())).length === 0 ? ( 
-                 <div className="md:col-span-2 lg:col-span-3 text-zinc-800 text-[10px] font-black uppercase text-center py-12 tracking-widest bg-zinc-900/10 rounded-3xl border border-dashed border-zinc-900">No active public nodes</div> 
-               ) : ( 
-                 publicRooms.filter(r => (r.title || r.roomId).toLowerCase().includes(publicRoomsFilter.toLowerCase())).map((room) => ( 
-                   <div key={room.roomId} className="flex items-center justify-between p-5 bg-zinc-950/40 rounded-2xl border border-zinc-900 hover:border-zinc-800 transition-all group"> 
-                     <div className="flex flex-col min-w-0 pr-4">
-                        <span className="font-sans text-zinc-300 font-black tracking-tight text-lg truncate" title={room.title || room.roomId}>{room.title || room.roomId}</span>
-                        <span className="text-[10px] text-zinc-600 font-mono uppercase tracking-widest mt-1">ID: {room.roomId}</span>
-                     </div>
-                     <button onClick={() => setActiveRoomId(room.roomId)} className="text-[10px] font-black bg-zinc-900 hover:bg-white hover:text-black text-zinc-500 px-6 py-2.5 rounded-xl border border-zinc-800 transition-all uppercase tracking-widest shrink-0">Connect</button> 
-                   </div> 
-                 )) 
-               )}
+              {publicRooms.filter((r) => (r.title || r.roomId).toLowerCase().includes(publicRoomsFilter.toLowerCase())).length === 0 ? (
+                <div className="col-span-full py-12 text-center text-xs text-zinc-600 font-bold uppercase tracking-wider bg-zinc-950/40 rounded-3xl border border-dashed border-zinc-900">
+                  No public sessions active. Start one above!
+                </div>
+              ) : (
+                publicRooms
+                  .filter((r) => (r.title || r.roomId).toLowerCase().includes(publicRoomsFilter.toLowerCase()))
+                  .map((room) => (
+                    <div
+                      key={room.roomId}
+                      className="p-4 bg-zinc-950/60 border border-zinc-800/80 rounded-2xl hover:border-zinc-700 transition-all flex items-center justify-between group"
+                    >
+                      <div className="min-w-0 pr-3">
+                        <h4 className="text-sm font-bold text-white truncate">{room.title || room.roomId}</h4>
+                        <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono mt-0.5">
+                          <span>{room.userCount} {room.userCount === 1 ? 'listener' : 'listeners'}</span>
+                          <span>• ID: {room.roomId}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setActiveRoomId(room.roomId)}
+                        className="px-4 py-2 bg-zinc-900 hover:bg-emerald-500 hover:text-black text-white text-xs font-bold rounded-xl border border-zinc-800 transition-all shrink-0"
+                      >
+                        Join
+                      </button>
+                    </div>
+                  ))
+              )}
             </div>
           </div>
         </div>
       </div>
     );
   }
-  const activeTrackId = isUnsynced ? detachedCurrentTrackId : roomState?.currentTrackId;
-  const activePlaybackState = isUnsynced ? detachedIsPlaying : roomState?.isPlaying;
-  const activeQueue = isUnsynced ? detachedQueue : (roomState?.queue || []);
 
   return (
-    <div className="h-screen flex flex-col bg-black text-white overflow-hidden relative">
-      {errorToast && <ErrorToast message={errorToast} onClose={() => setErrorToast(null)} />}
+    <div className="h-screen flex flex-col bg-black text-white overflow-hidden relative selection:bg-emerald-500 selection:text-black">
+      {/* Floating Canvas Reactions Layer */}
+      <FloatingReactions ref={floatingReactionsRef} />
 
-      <header className="h-16 shrink-0 border-b border-zinc-900 bg-zinc-950/50 backdrop-blur-xl px-4 md:px-8 flex items-center justify-between z-40">
-        {/* Left: Site logo as home button + room info */}
+      {/* YouTube Media Engine (Fixed behind app layout to maintain background audio & event loop) */}
+      <div className="fixed bottom-0 right-0 w-64 h-36 -z-50 pointer-events-none opacity-[0.001] overflow-hidden" aria-hidden="true">
+        {roomState?.currentTrackId && (
+          <YouTubePlayer
+            ref={ytPlayerRef}
+            key={roomState.currentTrackId}
+            videoId={roomState.currentTrackId}
+            isPlaying={roomState.isPlaying}
+            targetPlayhead={roomState.currentPlayhead || 0}
+            isHost={isHost}
+            onStateChange={handlePlayerStateChange}
+            onTimeUpdate={handleTimeUpdate}
+            updatedAt={roomState.updatedAt || 0}
+            volume={volume}
+            playbackRate={playbackRate}
+            dataSaver={dataSaver}
+            isUnsynced={isUnsynced}
+          />
+        )}
+      </div>
+
+      {/* Header */}
+      <header className="h-16 shrink-0 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-xl px-4 md:px-8 flex items-center justify-between z-40">
         <div className="flex items-center gap-3 min-w-0">
-          <button onClick={handleLeave} className="flex items-center gap-2 shrink-0 hover:opacity-80 transition-opacity" title="Back to Home">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800">
-              <Radio className="w-4 h-4 text-blue-500 animate-pulse" />
+          <button
+            onClick={handleLeave}
+            className="flex items-center gap-2 shrink-0 hover:opacity-80 transition-opacity"
+            title="Leave Session"
+          >
+            <div className="w-8 h-8 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+              <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
             </div>
-            <span className="text-sm font-black text-white uppercase italic tracking-tight hidden sm:block">Muser</span>
+            <span className="text-sm font-black uppercase italic text-white hidden sm:block">Muser</span>
           </button>
+
           <div className="w-px h-6 bg-zinc-800 shrink-0" />
+
           <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm md:text-base font-black text-white tracking-tighter truncate">{roomState?.title || activeRoomId}</h2>
-              <button onClick={handleCopyLink} className="p-1 hover:bg-zinc-800 rounded-md transition-all text-zinc-500 hover:text-white shrink-0">
-                {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Share2 className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-            {roomState?.title && roomState.title !== activeRoomId && (
-              <span className="text-[10px] text-zinc-500/60 font-mono uppercase tracking-wider leading-none">{activeRoomId}</span>
-            )}
+            <h2 className="text-sm md:text-base font-black text-white tracking-tight truncate">
+              {roomState?.title || activeRoomId}
+            </h2>
+            <span className="text-[10px] text-zinc-500 font-mono tracking-wider">
+              JAM #{activeRoomId} {isHost ? '• MASTER' : '• LISTENER'}
+            </span>
           </div>
         </div>
-        {/* Right: Action buttons */}
-        <div className="flex items-center gap-1 md:gap-3">
-          <button onClick={() => setShowUserList(!showUserList)} className={cn("p-2 rounded-xl transition-all", showUserList ? "bg-white text-black shadow-lg shadow-white/10" : "text-zinc-400 hover:bg-zinc-900 hover:text-white")} title="User Roster">
-            <Users className="w-5 h-5" />
+
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Quick Reaction Emojis for Peers */}
+          <div className="hidden md:flex items-center gap-1 bg-zinc-900/60 p-1 rounded-2xl border border-zinc-800">
+            {['🔥', '❤️', '🎉', '🎵'].map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => handleLocalReaction(emoji)}
+                className="w-7 h-7 hover:bg-zinc-800 rounded-xl text-sm flex items-center justify-center transition-all hover:scale-125 active:scale-95"
+                title={`Send ${emoji} reaction to peers`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+
+          {/* Fullscreen Party Mode */}
+          <button
+            onClick={() => setShowFullscreen(true)}
+            className="p-2.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-2xl border border-zinc-800 transition-all"
+            title="Fullscreen Party Visualizer (F)"
+          >
+            <Maximize2 className="w-4 h-4 text-emerald-400" />
           </button>
-          {isHost && ( <button onClick={() => setShowSettings(!showSettings)} className={cn("p-2 rounded-xl transition-all", showSettings ? "bg-white text-black" : "text-zinc-400 hover:bg-zinc-900 hover:text-white")} title="Settings"> <Settings className="w-5 h-5" /> </button> )}
-          <div className="w-px h-6 bg-zinc-800 mx-1" />
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={cn("p-2 rounded-xl transition-all lg:hidden", isSidebarOpen ? "bg-blue-600 text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-white")} title="Toggle Sidebar">
-            {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+
+          {/* Liked Songs Modal */}
+          <button
+            onClick={() => setShowLikedSongs(true)}
+            className="p-2.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-red-400 rounded-2xl border border-zinc-800 transition-all"
+            title="Liked Songs Library"
+          >
+            <Heart className="w-4 h-4 text-red-400" />
           </button>
-          <button onClick={handleLeave} className="p-2 hover:bg-zinc-900 rounded-xl transition-all text-zinc-400 hover:text-white" title="Leave Room">
-            <LogOut className="w-5 h-5" />
+
+          {/* Saved Playlists */}
+          <button
+            onClick={() => setShowPlaylistDrawer(true)}
+            className="p-2.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-2xl border border-zinc-800 transition-all"
+            title="Saved Playlists & Archives"
+          >
+            <Bookmark className="w-4 h-4 text-emerald-400" />
+          </button>
+
+          {/* Sleep Timer */}
+          <button
+            onClick={() => setShowSleepTimer(true)}
+            className={cn(
+              "p-2.5 rounded-2xl border transition-all flex items-center gap-1",
+              sleepTimerSeconds !== null || sleepTimerTargetTrack !== null
+                ? "bg-purple-500/20 text-purple-300 border-purple-500/40"
+                : "bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white border-zinc-800"
+            )}
+            title="Sleep Timer"
+          >
+            <Moon className="w-4 h-4" />
+            {sleepTimerSeconds !== null && (
+              <span className="text-[10px] font-mono font-bold hidden sm:inline">
+                {Math.ceil(sleepTimerSeconds / 60)}m
+              </span>
+            )}
+          </button>
+
+          {/* Members / Roster */}
+          <button
+            onClick={() => setShowRosterModal(true)}
+            className="p-2.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-2xl border border-zinc-800 transition-all flex items-center gap-1.5"
+            title="View active listeners"
+          >
+            <Users className="w-4 h-4 text-emerald-400" />
+            <span className="text-xs font-mono font-bold hidden sm:inline">
+              {roomState?.peers?.length || 1}
+            </span>
+          </button>
+
+          {/* QR Invite */}
+          <button
+            onClick={() => setShowShareModal(true)}
+            className="p-2.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-2xl border border-zinc-800 transition-all flex items-center gap-1.5"
+            title="Share session QR code"
+          >
+            <QrCode className="w-4 h-4 text-emerald-400" />
+            <span className="text-xs font-bold hidden sm:inline">Invite</span>
+          </button>
+
+          {/* Keyboard Shortcuts Help */}
+          <button
+            onClick={() => setShowShortcutHelp(true)}
+            className="p-2.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-2xl border border-zinc-800 transition-all hidden lg:flex"
+            title="Keyboard Shortcuts (?)"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
+
+          {/* Host Settings */}
+          {isHost && (
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="p-2.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-2xl border border-zinc-800 transition-all"
+              title="Host Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
+
+          <button
+            onClick={handleLeave}
+            className="p-2.5 hover:bg-red-950/40 text-zinc-400 hover:text-red-400 rounded-2xl border border-transparent hover:border-red-500/30 transition-all"
+            title="Leave Jam"
+          >
+            <LogOut className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      <div className="flex-1 flex min-h-0 relative">
-        <main className="flex-1 flex flex-col min-w-0 bg-black relative">
-          {isUnsynced && showWarningBanner && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 w-[90%] max-w-4xl bg-amber-950/40 border border-amber-500/30 text-amber-400 p-4 rounded-2xl flex justify-between items-center text-xs font-medium backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2">
-              <div className="flex items-center gap-3">
-                <span>⚠️ Independent Session Mode: You are currently detached from the Room Master. Playback controls, media additions, and queue progressions are isolated locally.</span>
-              </div>
-              <button onClick={() => setShowWarningBanner(false)} className="ml-4 hover:bg-amber-900/50 p-1 rounded-lg transition-all shrink-0">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-          <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 space-y-8 overflow-y-auto">
-            <div className="w-full max-w-2xl z-[60] relative">
+      {/* Main Workspace Layout */}
+      <div className="flex-1 flex min-h-0 relative overflow-hidden pb-16 lg:pb-0">
+        <div className="flex-1 w-full h-full p-3 md:p-6 lg:grid lg:grid-cols-12 lg:gap-6 overflow-hidden">
+          {/* Left: Queue */}
+          <div className={cn(
+            "h-full lg:col-span-4",
+            mobileTab === 'queue' ? "block" : "hidden lg:block"
+          )}>
+            <QueueView
+              queue={roomState?.queue || []}
+              history={roomState?.history || []}
+              isHost={isHost}
+              currentUserId={userId}
+              pendingRequests={roomState?.pendingRequests || []}
+              isRequestOnly={roomState?.isRequestOnly}
+              onReorder={(oldIdx, newIdx) => emitMutation('QUEUE_REORDER', { index: oldIdx, newIndex: newIdx })}
+              onRemove={(index) => emitMutation('QUEUE_REMOVE', { index })}
+              onJump={(index) => emitMutation('QUEUE_JUMP', { index })}
+              onUpvote={(videoId) => emitMutation('QUEUE_UPVOTE', { videoId })}
+              onAddAgain={(videoId, title) => emitMutation('QUEUE_ADD', { item: { videoId, title } })}
+              onToggleRequestOnly={(val) => emitMutation('SET_REQUEST_ONLY', { isRequestOnly: val })}
+              onApprove={(id) => emitMutation('APPROVE_REQUEST', { requestId: id })}
+              onDeny={(id) => emitMutation('DENY_REQUEST', { requestId: id })}
+              onApproveAll={() => emitMutation('APPROVE_ALL_REQUESTS')}
+              onDenyAll={() => emitMutation('DENY_ALL_REQUESTS')}
+              onClear={() => emitMutation('QUEUE_CLEAR')}
+              onShuffle={() => emitMutation('QUEUE_SHUFFLE')}
+            />
+          </div>
+
+          {/* Center: Hero Now Playing & Ingestion */}
+          <div className={cn(
+            "h-full lg:col-span-5 flex flex-col justify-between space-y-4 overflow-y-auto",
+            mobileTab === 'now-playing' || mobileTab === 'search' ? "block" : "hidden lg:flex"
+          )}>
+            <div className="w-full shrink-0">
               <MediaIngestionForm onIngest={handleIngest} />
             </div>
 
-            <div 
-              className={cn(
-                "bg-zinc-900 border border-zinc-800 relative overflow-hidden group shadow-2xl",
-                (!pipControls.isDragging && !pipControls.isResizing) && "transition-all duration-300",
-                isAppPiP 
-                  ? "fixed rounded-2xl border-white/20 z-[70]" 
-                  : "w-full max-w-4xl aspect-video rounded-[2rem] z-10"
-              )}
-              style={isAppPiP ? { top: pipControls.pos.y, left: pipControls.pos.x, width: pipControls.size.width, height: pipControls.size.height, touchAction: 'none' } : {}}
-              onPointerDown={pipControls.startDrag}
-              onPointerMove={pipControls.onDrag}
-              onPointerUp={pipControls.stopDrag}
-              onPointerCancel={pipControls.stopDrag}
-            >
-              {isAppPiP && (
-                <div 
-                  className="pip-resize-handle absolute bottom-0 right-0 w-8 h-8 cursor-se-resize z-[80] flex items-end justify-end p-1.5 opacity-50 hover:opacity-100"
-                  onPointerDown={pipControls.startResize}
-                  onPointerMove={pipControls.onResize}
-                  onPointerUp={pipControls.stopResize}
-                  onPointerCancel={pipControls.stopResize}
-                >
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 0L0 12H12V0Z" fill="currentColor" className="text-zinc-500" />
-                  </svg>
-                </div>
-              )}
-              {isAppPiP && (
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setIsAppPiP(false); }} 
-                  className="pip-close-btn absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-black text-white rounded-lg z-[80] opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-md"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-              {activeTrackId ? (
-                <YouTubePlayer ref={ytPlayerRef} key={activeTrackId} videoId={activeTrackId} isPlaying={activePlaybackState ?? false} targetPlayhead={roomState?.currentPlayhead || 0} isHost={isHost} onStateChange={handlePlayerStateChange} updatedAt={roomState?.updatedAt || Date.now()} volume={volume} dataSaver={dataSaver} muted={audioMode === 'passive'} isUnsynced={isUnsynced} />
-              ) : (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center space-y-6">
-                  <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center animate-pulse"> <Radio className="w-8 h-8 text-zinc-600" /> </div>
-                  <h3 className="text-2xl md:text-3xl font-black text-zinc-700 tracking-tighter"> WAITING FOR <span className="text-zinc-600 uppercase italic tracking-widest ml-2">Media</span> </h3>
-                </div>
-              )}
+            <div className="flex-1 flex items-center justify-center min-h-0 py-2">
+              <NowPlayingCard
+                videoId={roomState?.currentTrackId || ''}
+                title={roomState?.currentTitle || ''}
+                author={roomState?.currentAuthor}
+                duration={roomState?.currentDuration}
+                addedBy={roomState?.currentTrackAddedBy}
+                isPlaying={roomState?.isPlaying || false}
+                isHost={isHost}
+                isUnsynced={isUnsynced}
+                volume={volume}
+                playbackRate={playbackRate}
+                isLiked={roomState?.currentTrackId ? likedTrackIds.has(roomState.currentTrackId) : false}
+                dataSaver={dataSaver}
+                repeatMode={roomState?.repeatMode || 'off'}
+                p2pStatus={p2pStatus}
+                p2pLatencyMs={p2pLatencyMs}
+                currentTime={currentTime}
+                totalDuration={totalDuration}
+                onPlay={() => emitMutation('PLAY', { playhead: currentTime })}
+                onPause={() => emitMutation('PAUSE', { playhead: currentTime })}
+                onSkip={() => emitMutation('SKIP')}
+                onBack={() => emitMutation('BACK')}
+                onSeek={handleSeek}
+                onToggleRepeat={handleToggleRepeat}
+                onToggleDataSaver={() => setDataSaver(!dataSaver)}
+                onToggleUnsynced={() => setIsUnsynced(!isUnsynced)}
+                onVolumeChange={(v) => setVolume(v)}
+                onToggleLike={handleToggleLikeCurrentTrack}
+                onOpenLyrics={() => setShowLyrics(true)}
+                onCyclePlaybackRate={handleCyclePlaybackRate}
+                canGoBack={isHost && (roomState?.history?.length || 0) > 0}
+                canSkip={isHost && ((roomState?.queue?.length || 0) > 0 || (roomState?.repeatMode || 'off') !== 'off' || !!roomState?.isDjAutoplayEnabled)}
+                audioUnlocked={audioUnlocked}
+                onUnlockAudio={handleUnlockAudio}
+              />
+            </div>
+          </div>
+
+          {/* Right: Live Chat */}
+          <div className={cn(
+            "h-full lg:col-span-3",
+            mobileTab === 'chat' ? "block" : "hidden lg:block"
+          )}>
+            <ChatView
+              messages={messages}
+              onSendMessage={sendMessage}
+              currentUserId={userId}
+              chatError={chatError}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile Bottom Navigation */}
+      <MobileBottomNav
+        activeTab={mobileTab}
+        onTabChange={(tab) => setMobileTab(tab)}
+        queueCount={roomState?.queue?.length || 0}
+        unreadChatCount={messages.length > 0 ? 1 : 0}
+        currentTitle={roomState?.currentTitle}
+        isPlaying={roomState?.isPlaying || false}
+        onTogglePlay={() => emitMutation(roomState?.isPlaying ? 'PAUSE' : 'PLAY', { playhead: currentTime })}
+        currentThumbnail={roomState?.currentTrackId ? `https://img.youtube.com/vi/${roomState.currentTrackId}/default.jpg` : undefined}
+        isHost={isHost}
+      />
+
+      {/* Host Settings Modal */}
+      {showSettings && isHost && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-3xl p-6 shadow-2xl space-y-6">
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-4">
+              <h3 className="text-sm font-black text-white uppercase tracking-wider">Session Settings</h3>
+              <button onClick={() => setShowSettings(false)} className="p-1.5 hover:bg-zinc-900 rounded-xl text-zinc-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            <div className="flex flex-col items-center gap-4 w-full max-w-3xl z-10">
-              <div className="w-full flex flex-wrap items-center justify-between gap-y-3 gap-x-4 px-4 md:px-6 py-4 bg-zinc-900/50 rounded-3xl border border-zinc-800/50 backdrop-blur-md">
-                 {/* Container Block 1 - Player Controls (always centered on top row) */}
-                 <div className="flex items-center justify-center gap-4 md:gap-8 w-full sm:w-auto sm:flex-1 order-1">
-                   <button onClick={() => {
-                     if (isUnsynced) {
-                       ytPlayerRef.current?.seekTo(0);
-                     } else {
-                       emitMutation('BACK');
-                     }
-                   }} disabled={(!isHost && !isUnsynced) || (!isUnsynced && (roomState?.history?.length || 0) === 0)} className="p-3 bg-zinc-900 hover:bg-zinc-800 rounded-2xl border border-zinc-800 text-zinc-600 transition-all hover:scale-105 active:scale-90 disabled:opacity-20 disabled:pointer-events-none" title="Previous Track">
-                     <RotateCcw className="w-5 h-5" />
-                   </button>                  
-                   <button onClick={() => { 
-                     const isPlaying = activePlaybackState; 
-                     if (isUnsynced) {
-                       if (isPlaying) ytPlayerRef.current?.pauseVideo();
-                       else ytPlayerRef.current?.playVideo();
-                       setDetachedIsPlaying(!isPlaying);
-                     } else {
-                       const playhead = ytPlayerRef.current?.getCurrentTime() || roomState?.currentPlayhead || 0; 
-                       emitMutation(isPlaying ? 'PAUSE' : 'PLAY', { playhead }); 
-                     }
-                   }} disabled={(!isHost && !isUnsynced) || (!activeTrackId && activeQueue.length === 0)} className={cn( "w-16 h-16 flex items-center justify-center rounded-[2rem] transition-all hover:scale-105 active:scale-95 shadow-2xl disabled:opacity-20 disabled:grayscale disabled:cursor-not-allowed", activePlaybackState ? "bg-zinc-900 border border-zinc-800 text-white" : "bg-white text-black" )} >
-                     {activePlaybackState ? <Pause className="w-7 h-7 fill-current" /> : <Play className="w-7 h-7 fill-current ml-1" />}
-                   </button>
-                   <button onClick={() => {
-                     if (isUnsynced) {
-                       if (detachedQueue.length > 0) {
-                         const nextItem = detachedQueue[0];
-                         setDetachedQueue(detachedQueue.slice(1));
-                         setDetachedCurrentTrackId(nextItem.videoId);
-                         setDetachedIsPlaying(true);
-                       } else {
-                         setDetachedCurrentTrackId(null);
-                         setDetachedIsPlaying(false);
-                       }
-                     } else {
-                       emitMutation('SKIP');
-                     }
-                   }} disabled={(!isHost && !isUnsynced) || activeQueue.length === 0} className="p-3 bg-zinc-900 hover:bg-zinc-800 rounded-2xl border border-zinc-800 text-zinc-600 transition-all hover:scale-105 active:scale-90 disabled:opacity-20 disabled:grayscale disabled:cursor-not-allowed" title="Skip Track">
-                     <SkipForward className="w-5 h-5 fill-current" />
-                   </button>
-                   <button onClick={() => {
-                     if (isHost && !isUnsynced) {
-                        const currentMode = roomState?.repeatMode || 'off';
-                        const nextMode = currentMode === 'off' ? 'track' : currentMode === 'track' ? 'queue' : 'off';
-                        emitMutation('SET_REPEAT_MODE', { repeatMode: nextMode });
-                     }
-                   }} disabled={!isHost || isUnsynced} className={cn("p-3 rounded-2xl border transition-all hover:scale-105 active:scale-90 disabled:opacity-20 disabled:pointer-events-none", (roomState?.repeatMode || 'off') !== 'off' ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-500" : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-600")} title="Repeat Mode">
-                     {(roomState?.repeatMode || 'off') === 'track' ? <Repeat1 className="w-5 h-5" /> : <Repeat className="w-5 h-5" />}
-                   </button>
-                   <button onClick={() => setIsAppPiP(!isAppPiP)} className={cn("p-3 rounded-2xl border transition-all hover:scale-105 active:scale-90", isAppPiP ? "bg-blue-500/10 border-blue-500/50 text-blue-400" : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-600")} title="In-App Picture in Picture">
-                     <PictureInPicture className="w-5 h-5" />
-                   </button>
-                 </div>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Session Title</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <button
+                    onClick={() => emitMutation('SET_TITLE', { title: editTitle })}
+                    className="px-3 py-2 bg-emerald-500 text-black font-bold text-xs rounded-xl hover:bg-emerald-400"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
 
-                 {/* Container Block 2 - Mode Toggles */}
-                 <div className="flex items-center gap-2 order-2 flex-shrink-0">
-                    {!isHost && (
-                      <button onClick={() => setIsUnsynced(!isUnsynced)} className={cn("flex items-center gap-2 px-3 py-2 rounded-xl border transition-all flex-shrink-0", isUnsynced ? "bg-orange-500/10 border-orange-500/50 text-orange-400" : "bg-zinc-800/50 border-zinc-700/50 text-zinc-500")} title="Bypass Master Sync">
-                         <ShieldCheck className={cn("w-3.5 h-3.5", isUnsynced ? "text-orange-400" : "text-zinc-600")} />
-                         <span className="text-[9px] font-black uppercase tracking-widest">{isUnsynced ? 'Detached' : 'Synced'}</span>
-                      </button>
-                    )}
+              {/* DJ Autoplay Mode */}
+              <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-2xl border border-zinc-800">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>DJ Autoplay Radio</span>
+                  </div>
+                  <div className="text-[10px] text-zinc-500">Auto-queue related songs when empty</div>
+                </div>
+                <button
+                  onClick={() => emitMutation('SET_DJ_AUTOPLAY', { isDjAutoplayEnabled: !roomState?.isDjAutoplayEnabled })}
+                  className={cn(
+                    "w-11 h-6 rounded-full transition-all relative",
+                    roomState?.isDjAutoplayEnabled ? "bg-emerald-500" : "bg-zinc-800"
+                  )}
+                >
+                  <div className={cn("w-4 h-4 bg-black rounded-full absolute top-1 transition-all", roomState?.isDjAutoplayEnabled ? "right-1" : "left-1")} />
+                </button>
+              </div>
 
-                    <button onClick={() => setDataSaver(!dataSaver)} className={cn( "flex items-center gap-2 px-3 py-2 rounded-xl transition-all border flex-shrink-0 min-w-max whitespace-nowrap", dataSaver ? "bg-blue-500/10 border-blue-500/50 text-blue-400" : "bg-zinc-800/50 border-zinc-700/50 text-zinc-500 hover:text-zinc-300" )} >
-                      <div className={cn("w-1.5 h-1.5 rounded-full", dataSaver ? "bg-blue-400 animate-pulse shadow-[0_0_8px_rgba(96,165,250,0.5)]" : "bg-zinc-600")} />
-                      <span className="text-[9px] font-black uppercase tracking-wider"> {dataSaver ? 'Active' : 'Data Saver'} </span>
-                    </button>
-                 </div>
+              <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-2xl border border-zinc-800">
+                <div>
+                  <div className="text-xs font-bold text-white">Public Jam</div>
+                  <div className="text-[10px] text-zinc-500">Show in public browser</div>
+                </div>
+                <button
+                  onClick={() => emitMutation('SET_PUBLIC', { isPublic: !roomState?.isPublic })}
+                  className={cn(
+                    "w-11 h-6 rounded-full transition-all relative",
+                    roomState?.isPublic ? "bg-emerald-500" : "bg-zinc-800"
+                  )}
+                >
+                  <div className={cn("w-4 h-4 bg-black rounded-full absolute top-1 transition-all", roomState?.isPublic ? "right-1" : "left-1")} />
+                </button>
+              </div>
 
-                 {/* Container Block 3 - Volume Bar (full width on mobile, left-aligned on sm+) */}
-                 <div className="flex items-center gap-2 w-full sm:w-44 order-3 flex-shrink-0">
-                   <div className="p-2 rounded-lg bg-zinc-800/50 flex-shrink-0"> <VolumeX className="w-4 h-4 text-zinc-400" /> </div>
-                   <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(parseInt(e.target.value))} className="flex-1 h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-white" />
-                   <div className="w-12 text-right font-mono text-xs"><span className="font-bold text-zinc-400">{volume}</span></div>
-                 </div>
+              <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-2xl border border-zinc-800">
+                <div>
+                  <div className="text-xs font-bold text-white">Governance Mode</div>
+                  <div className="text-[10px] text-zinc-500">Require approval for guest adds</div>
+                </div>
+                <button
+                  onClick={() => emitMutation('SET_REQUEST_ONLY', { isRequestOnly: !roomState?.isRequestOnly })}
+                  className={cn(
+                    "w-11 h-6 rounded-full transition-all relative",
+                    roomState?.isRequestOnly ? "bg-emerald-500" : "bg-zinc-800"
+                  )}
+                >
+                  <div className={cn("w-4 h-4 bg-black rounded-full absolute top-1 transition-all", roomState?.isRequestOnly ? "right-1" : "left-1")} />
+                </button>
+              </div>
+
+              <div className="p-3 bg-zinc-900/60 rounded-2xl border border-zinc-800 space-y-3">
+                <div>
+                  <div className="text-xs font-bold text-white">Chat Rate Limiter</div>
+                  <div className="text-[10px] text-zinc-500">Messages allowed per interval</div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[9px] font-bold text-zinc-500 uppercase">Max msgs</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="50"
+                      value={chatMaxTokens}
+                      onChange={(e) => setChatMaxTokens(Number(e.target.value))}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-bold text-zinc-500 uppercase">Interval (s)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="60"
+                      value={chatInterval}
+                      onChange={(e) => setChatInterval(Number(e.target.value))}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={() => emitMutation('SET_CHAT_RATE_LIMIT', { chatRateLimit: { maxTokens: chatMaxTokens, intervalMs: chatInterval * 1000 } })}
+                  className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-bold transition-all"
+                >
+                  Update Limits
+                </button>
               </div>
             </div>
           </div>
-        </main>
+        </div>
+      )}
 
-        <aside className={cn( "fixed inset-y-0 right-0 z-[80] w-80 bg-zinc-950 border-l border-zinc-900 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 flex flex-col shadow-2xl lg:shadow-none", isSidebarOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0", "lg:w-96" )}>
-          {isSidebarOpen && (
-            <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden absolute -left-12 top-4 p-3 bg-zinc-950 border border-zinc-900 rounded-l-xl text-zinc-400 animate-in fade-in slide-in-from-right-4 duration-300">
-              <ChevronRight className="w-6 h-6" />
-            </button>
-          )}
-          <div className="flex border-b border-zinc-900 shrink-0">
-            <button onClick={() => setMobileTab('chat')} className={cn( "flex-1 py-4 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] transition-all", mobileTab === 'chat' ? "text-white border-b-2 border-white" : "text-zinc-600 hover:text-zinc-400" )}> <MessageSquare className="w-3 h-3" /> Stream Chat </button>
-            <button onClick={() => setMobileTab('queue')} className={cn( "flex-1 py-4 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] transition-all", mobileTab === 'queue' ? "text-white border-b-2 border-white" : "text-zinc-600 hover:text-zinc-400" )}> <ListMusic className="w-3 h-3" /> Media Queue {roomState?.queue && roomState.queue.length > 0 && ( <span className="bg-blue-600 text-[8px] px-1.5 py-0.5 rounded-full ml-1">{roomState.queue.length}</span> )} </button>
-          </div>
-          <div className="flex-1 min-h-0">
-            {mobileTab === 'chat' ? (
-              <ChatView messages={messages} onSendMessage={sendMessage} currentUserId={userId} chatError={chatError} />
-            ) : (
-              <QueueView 
-                queue={roomState?.queue || []} 
-                detachedQueue={detachedQueue}
-                isUnsynced={isUnsynced}
-                history={roomState?.history || []}
-                isHost={isHost} 
-                localUserId={userId}
-                hostUserId={roomState?.hostUserId}
-                onClear={() => emitMutation('QUEUE_CLEAR')}
-                onShuffle={() => emitMutation('QUEUE_SHUFFLE')}
-                onReorder={(oldIndex, newIndex) => emitMutation('QUEUE_REORDER', { index: oldIndex, newIndex })}
-                onLocalReorder={(oldIndex, newIndex) => {
-                  const newQ = [...detachedQueue];
-                  const [item] = newQ.splice(oldIndex, 1);
-                  newQ.splice(newIndex, 0, item);
-                  setDetachedQueue(newQ);
-                }}
-                onRemove={(index) => emitMutation('QUEUE_REMOVE', { index })}
-                onLocalRemove={(index) => {
-                  const newQ = [...detachedQueue];
-                  newQ.splice(index, 1);
-                  setDetachedQueue(newQ);
-                }}
-                onJump={(index) => emitMutation('QUEUE_JUMP', { index })}
-                onLocalJump={(index) => {
-                  if (index < detachedQueue.length) {
-                    const item = detachedQueue[index];
-                    setDetachedQueue(detachedQueue.slice(index + 1));
-                    setDetachedCurrentTrackId(item.videoId);
-                    setDetachedIsPlaying(true);
-                  }
-                }}
-                isRequestOnly={roomState?.isRequestOnly}
-                onToggleRequestOnly={(val) => emitMutation('SET_REQUEST_ONLY', { isRequestOnly: val })}
-                pendingRequests={roomState?.pendingRequests}
-                onApprove={(id) => emitMutation('APPROVE_REQUEST', { requestId: id })}
-                onDeny={(id) => emitMutation('DENY_REQUEST', { requestId: id })}
-                onApproveAll={() => emitMutation('APPROVE_ALL_REQUESTS')}
-                onDenyAll={() => emitMutation('DENY_ALL_REQUESTS')}
-              />
-            )}
-          </div>
-        </aside>
+      {/* Fullscreen Party Mode */}
+      {showFullscreen && (
+        <FullscreenPlayer
+          videoId={roomState?.currentTrackId || ''}
+          title={roomState?.currentTitle || ''}
+          author={roomState?.currentAuthor}
+          addedBy={roomState?.currentTrackAddedBy}
+          isPlaying={roomState?.isPlaying || false}
+          isHost={isHost}
+          volume={volume}
+          currentTime={currentTime}
+          totalDuration={totalDuration}
+          repeatMode={roomState?.repeatMode || 'off'}
+          roomId={activeRoomId}
+          onPlay={() => emitMutation('PLAY', { playhead: currentTime })}
+          onPause={() => emitMutation('PAUSE', { playhead: currentTime })}
+          onSkip={() => emitMutation('SKIP')}
+          onBack={() => emitMutation('BACK')}
+          onSeek={handleSeek}
+          onVolumeChange={(v) => setVolume(v)}
+          onToggleRepeat={handleToggleRepeat}
+          onReact={handleLocalReaction}
+          onClose={() => setShowFullscreen(false)}
+        />
+      )}
 
-        {showUserList && (
-          <div className="absolute top-16 right-4 w-64 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-200 overflow-hidden">
-             <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-               <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Active Peers</span>
-               <button onClick={() => setShowUserList(false)}><X className="w-4 h-4 text-zinc-600" /></button>
-             </div>
-             <div className="max-h-64 overflow-y-auto p-2 space-y-1">
-                {(roomState?.peers || []).map((peer: any) => (
-                  <div key={peer.socketId} className="flex items-center justify-between p-2 rounded-xl bg-zinc-800/30">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xs font-bold text-white shrink-0"> {peer.username[0]?.toUpperCase() || '?'} </div>
-                      <div className="flex flex-col min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold truncate"> {peer.username} {peer.userId === userId && " (You)"} </span>
-                          {peer.isDetached && (
-                            <span className="text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider">Detached</span>
-                          )}
-                        </div>
-                        <span className="text-[9px] text-zinc-600 font-mono">ID: {peer.userId}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {peer.userId === roomState?.hostUserId ? ( <Crown className="w-3.5 h-3.5 text-yellow-500 fill-current" /> ) : ( isHost && ( <button onClick={() => { if (confirm(`Transfer Master authority to ${peer.username}?`)) { emitMutation('TRANSFER_AUTHORITY', { targetUserId: peer.socketId }); } }} className="p-1.5 hover:bg-white hover:text-black rounded-md transition-all text-zinc-600" title="Make Master" > <Crown className="w-3 h-3" /> </button> ) )}
-                    </div>
-                  </div>
-                ))}
-             </div>
-          </div>
-        )}
+      {/* Synced Lyrics Drawer */}
+      {showLyrics && roomState?.currentTrackId && (
+        <LyricsDrawer
+          title={roomState.currentTitle || ''}
+          author={roomState.currentAuthor}
+          currentTime={currentTime}
+          onClose={() => setShowLyrics(false)}
+        />
+      )}
 
-        {showSettings && isHost && (
-          <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-             <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-[2rem] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-300">
-               <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
-                 <h3 className="text-sm font-black text-zinc-300 uppercase tracking-widest">Room Settings</h3>
-                 <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-zinc-800 rounded-xl transition-all"><X className="w-5 h-5" /></button>
-               </div>
-               <div className="p-8 space-y-8">
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest ml-1">Room Title</label>
-                    <div className="flex gap-2">
-                       <input type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-white" />
-                       <button onClick={() => emitMutation('SET_TITLE', { title: editTitle })} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all">Save</button>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div> <div className="text-sm font-bold text-white">Public Room</div> <div className="text-xs text-zinc-500">Show this room in the public browser</div> </div>
-                    <button onClick={() => emitMutation('SET_PUBLIC', { isPublic: !roomState?.isPublic })} className={cn("w-12 h-6 rounded-full transition-all relative", roomState?.isPublic ? "bg-blue-600" : "bg-zinc-800")}> <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-all", roomState?.isPublic ? "right-1" : "left-1")} /> </button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div> <div className="text-sm font-bold text-white">Governance Mode</div> <div className="text-xs text-zinc-500">Require host approval for guest adds</div> </div>
-                    <button onClick={() => emitMutation('SET_REQUEST_ONLY', { isRequestOnly: !roomState?.isRequestOnly })} className={cn("w-12 h-6 rounded-full transition-all relative", roomState?.isRequestOnly ? "bg-blue-600" : "bg-zinc-800")}> <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-all", roomState?.isRequestOnly ? "right-1" : "left-1")} /> </button>
-                  </div>
-                  <div className="p-4 bg-zinc-950 rounded-2xl border border-zinc-800/50 space-y-4">
-                    <div> <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Chat Rate Limiter</div> <div className="text-[10px] text-zinc-600">Messages allowed per interval</div> </div>
-                    <div className="flex gap-4">
-                      <div className="flex-1 space-y-2">
-                        <label className="text-[10px] font-bold text-zinc-600 uppercase">Max Messages</label>
-                        <input type="number" min="1" max="50" value={chatMaxTokens} onChange={(e) => setChatMaxTokens(Number(e.target.value))} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 text-white" />
-                      </div>
-                      <div className="flex-1 space-y-2">
-                        <label className="text-[10px] font-bold text-zinc-600 uppercase">Interval (sec)</label>
-                        <input type="number" min="1" max="60" value={chatInterval} onChange={(e) => setChatInterval(Number(e.target.value))} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 text-white" />
-                      </div>
-                    </div>
-                    <button onClick={() => emitMutation('SET_CHAT_RATE_LIMIT', { chatRateLimit: { maxTokens: chatMaxTokens, intervalMs: chatInterval * 1000 } })} className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-xl text-xs font-bold transition-all">Update Chat Limits</button>
-                  </div>
-                  <div className="p-4 bg-zinc-950 rounded-2xl border border-zinc-800/50">
-                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4">Audio Topology</div>
-                    <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => setAudioMode('sync')} className={cn( "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all", audioMode === 'sync' ? "bg-blue-500/10 border-blue-500 text-blue-400" : "bg-zinc-900 border-zinc-800 text-zinc-500" )}> <Headphones className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">Master Sync</span> </button>
-                        <button onClick={() => setAudioMode('passive')} className={cn( "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all", audioMode === 'passive' ? "bg-zinc-800 border-zinc-700 text-zinc-300" : "bg-zinc-900 border-zinc-800 text-zinc-500" )}> <VolumeX className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">Passive</span> </button>
-                    </div>
-                  </div>
-                  <button onClick={handleCopyLink} className="w-full py-4 bg-zinc-800 hover:bg-zinc-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 transition-all" > {copied ? <Check className="w-4 h-4 text-green-500" /> : <Share2 className="w-4 h-4" />} {copied ? "Copied!" : "Copy Invite Link"} </button>
-               </div>
-             </div>
-          </div>
-        )}
-      </div>
+      {/* Liked Songs Library Modal */}
+      {showLikedSongs && (
+        <LikedSongsModal
+          onQueueTrack={handleQueueLikedTrack}
+          onQueueAll={handleQueueAllLiked}
+          onClose={() => setShowLikedSongs(false)}
+        />
+      )}
 
-      <footer className="h-8 shrink-0 bg-zinc-950 border-t border-zinc-900 px-6 flex items-center justify-between">
-         <div className="flex items-center gap-6 text-[9px] font-black uppercase tracking-widest text-zinc-600">
-           <div className="flex items-center gap-1.5">
-             <div className={cn("w-1.5 h-1.5 rounded-full", isConnected ? "bg-green-500" : "bg-red-500")} />
-             {isConnected ? "NETWORK: OPERATIONAL" : "NETWORK: DISCONNECTED"}
-           </div>
-           <div className="flex items-center gap-3">
-              <span>NODE: {isHost ? "MASTER" : "LISTENER"}</span>
-              <span className="opacity-50">|</span>
-              <span className="text-zinc-500">IDENTITY: {username}</span>
-           </div>
-         </div>
-         <div className="text-[9px] font-mono text-zinc-800 tracking-tighter uppercase opacity-50">Muser Core v1.3.1</div>
-      </footer>
+      {/* Playlists & Archives Drawer */}
+      {showPlaylistDrawer && (
+        <PlaylistDrawer
+          currentQueue={roomState?.queue || []}
+          currentTrack={roomState?.currentTrackId ? {
+            videoId: roomState.currentTrackId,
+            title: roomState.currentTitle,
+            duration: roomState.currentDuration,
+            author: roomState.currentAuthor
+          } : undefined}
+          onLoadPlaylist={handleLoadSavedPlaylist}
+          onClose={() => setShowPlaylistDrawer(false)}
+        />
+      )}
+
+      {/* Sleep Timer Modal */}
+      {showSleepTimer && (
+        <SleepTimerModal
+          currentRemainingSeconds={sleepTimerSeconds}
+          onSetTimer={handleSetSleepTimer}
+          onCancelTimer={handleCancelSleepTimer}
+          onClose={() => setShowSleepTimer(false)}
+        />
+      )}
+
+      {/* Keyboard Shortcuts Cheat Sheet */}
+      {showShortcutHelp && (
+        <ShortcutHelpModal onClose={() => setShowShortcutHelp(false)} />
+      )}
+
+      {/* Share / QR Modal */}
+      {showShareModal && (
+        <ShareModal
+          roomId={activeRoomId}
+          roomTitle={roomState?.title || activeRoomId}
+          onClose={() => setShowShareModal(false)}
+        />
+      )}
+
+      {/* User Roster / P2P Modal */}
+      {showRosterModal && (
+        <UserRosterModal
+          peers={roomState?.peers || []}
+          currentUserId={userId}
+          hostUserId={roomState?.hostUserId}
+          isHost={isHost}
+          p2pStatus={p2pStatus}
+          p2pLatencyMs={p2pLatencyMs}
+          onTransferHost={handleTransferHost}
+          onClose={() => setShowRosterModal(false)}
+        />
+      )}
     </div>
   );
 }
