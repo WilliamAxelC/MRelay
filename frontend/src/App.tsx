@@ -871,6 +871,7 @@ export function App() {
             <ChatView
               messages={messages}
               onSendMessage={sendMessage}
+              onReaction={handleLocalReaction}
               currentUserId={userId}
               chatError={chatError}
             />

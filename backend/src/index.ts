@@ -91,9 +91,9 @@ export class BoundedLRUCache<K, V> {
   }
 }
 
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
-const searchCache = new BoundedLRUCache<string, any>(500, CACHE_TTL_MS);
-const metadataCache = new BoundedLRUCache<string, { title: string; duration?: string; author?: string }>(1000, CACHE_TTL_MS);
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const searchCache = new BoundedLRUCache<string, any>(1000, CACHE_TTL_MS);
+const metadataCache = new BoundedLRUCache<string, { title: string; duration?: string; author?: string }>(2000, CACHE_TTL_MS);
 
 // Periodic garbage collection sweep for caches and rate limiters
 setInterval(() => {

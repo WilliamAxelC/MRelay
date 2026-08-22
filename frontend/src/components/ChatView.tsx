@@ -6,6 +6,7 @@ import type { ChatMessage } from '../hooks/useSocket';
 interface ChatViewProps {
   messages: ChatMessage[];
   onSendMessage: (text: string) => void;
+  onReaction?: (emoji: string) => void;
   currentUserId: string;
   chatError?: { message: string; remainingMs: number } | null;
 }
@@ -15,6 +16,7 @@ const QUICK_EMOJIS = ['🔥', '❤️', '👏', '🎉', '💃', '🚀', '✨', '
 export const ChatView: React.FC<ChatViewProps> = React.memo(({ 
   messages, 
   onSendMessage, 
+  onReaction,
   currentUserId, 
   chatError 
 }) => {
@@ -38,7 +40,11 @@ export const ChatView: React.FC<ChatViewProps> = React.memo(({
   };
 
   const handleEmojiClick = (emoji: string) => {
-    onSendMessage(emoji);
+    if (onReaction) {
+      onReaction(emoji);
+    } else {
+      onSendMessage(emoji);
+    }
   };
 
   return (

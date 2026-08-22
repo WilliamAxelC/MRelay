@@ -21,6 +21,7 @@ export const MediaIngestionForm: React.FC<MediaIngestionFormProps> = React.memo(
   const [showDropdown, setShowDropdown] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const clientCacheRef = useRef<Map<string, SearchResult[]>>(new Map());
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,20 +44,29 @@ export const MediaIngestionForm: React.FC<MediaIngestionFormProps> = React.memo(
       return;
     }
 
+    const cacheKey = searchTerm.toLowerCase().trim();
+    if (clientCacheRef.current.has(cacheKey)) {
+      setSearchResults(clientCacheRef.current.get(cacheKey) || []);
+      setShowDropdown(true);
+      return;
+    }
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
     abortControllerRef.current = new AbortController();
 
     setIsSearching(true);
+    setShowDropdown(true);
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(searchTerm)}`, {
         signal: abortControllerRef.current.signal
       });
       if (res.ok) {
         const data = await res.json();
-        setSearchResults(data.results || []);
-        setShowDropdown(true);
+        const results = data.results || [];
+        clientCacheRef.current.set(cacheKey, results);
+        setSearchResults(results);
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
@@ -74,9 +84,15 @@ export const MediaIngestionForm: React.FC<MediaIngestionFormProps> = React.memo(
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     if (val.trim().length >= 2 && !val.match(/^https?:\/\//)) {
-      debounceRef.current = setTimeout(() => {
-        performSearch(val.trim());
-      }, 400);
+      const cacheKey = val.toLowerCase().trim();
+      if (clientCacheRef.current.has(cacheKey)) {
+        setSearchResults(clientCacheRef.current.get(cacheKey) || []);
+        setShowDropdown(true);
+      } else {
+        debounceRef.current = setTimeout(() => {
+          performSearch(val.trim());
+        }, 220);
+      }
     } else {
       setSearchResults([]);
       setShowDropdown(false);

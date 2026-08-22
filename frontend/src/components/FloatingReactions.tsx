@@ -23,55 +23,30 @@ export const FloatingReactions = forwardRef<FloatingReactionsRef>((_, ref) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const particlesRef = useRef<ReactionParticle[]>([]);
   const animationFrameRef = useRef<number | null>(null);
+  const isRunningRef = useRef<boolean>(false);
 
-  useImperativeHandle(ref, () => ({
-    spawnReaction: (emoji: string, originX?: number) => {
-      const canvas = canvasRef.current;
-      const width = canvas ? canvas.width : window.innerWidth;
-      const height = canvas ? canvas.height : window.innerHeight;
+  const startLoop = () => {
+    if (isRunningRef.current) return;
+    isRunningRef.current = true;
 
-      const baseX = originX !== undefined ? originX : width * (0.3 + Math.random() * 0.4);
-      const count = 3 + Math.floor(Math.random() * 3);
-
-      for (let i = 0; i < count; i++) {
-        const particle: ReactionParticle = {
-          id: `${Date.now()}-${Math.random()}`,
-          emoji,
-          x: baseX + (Math.random() * 60 - 30),
-          y: height - 80 - Math.random() * 40,
-          vx: (Math.random() - 0.5) * 2.5,
-          vy: -(2.5 + Math.random() * 3.5),
-          size: 24 + Math.random() * 16,
-          opacity: 1.0,
-          rotation: (Math.random() - 0.5) * 0.4,
-          vRot: (Math.random() - 0.5) * 0.05,
-          life: 0,
-          maxLife: 90 + Math.floor(Math.random() * 40)
-        };
-        particlesRef.current.push(particle);
-      }
-    }
-  }));
-
-  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-
-    handleResize();
-    window.addEventListener('resize', handleResize);
 
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const particles = particlesRef.current;
+      if (particles.length === 0) {
+        isRunningRef.current = false;
+        animationFrameRef.current = null;
+        return;
+      }
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         p.life++;
@@ -89,8 +64,6 @@ export const FloatingReactions = forwardRef<FloatingReactionsRef>((_, ref) => {
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rotation);
         ctx.font = `${p.size}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
         ctx.fillText(p.emoji, 0, 0);
         ctx.restore();
 
@@ -103,10 +76,60 @@ export const FloatingReactions = forwardRef<FloatingReactionsRef>((_, ref) => {
     };
 
     animationFrameRef.current = requestAnimationFrame(render);
+  };
+
+  useImperativeHandle(ref, () => ({
+    spawnReaction: (emoji: string, originX?: number) => {
+      const canvas = canvasRef.current;
+      const width = canvas ? canvas.width : window.innerWidth;
+      const height = canvas ? canvas.height : window.innerHeight;
+
+      const baseX = originX !== undefined ? originX : width * (0.3 + Math.random() * 0.4);
+      const count = 2 + Math.floor(Math.random() * 2);
+
+      // Hard cap to prevent lag on spam
+      if (particlesRef.current.length > 40) {
+        particlesRef.current.splice(0, particlesRef.current.length - 35);
+      }
+
+      for (let i = 0; i < count; i++) {
+        const particle: ReactionParticle = {
+          id: `${Date.now()}-${Math.random()}`,
+          emoji,
+          x: baseX + (Math.random() * 40 - 20),
+          y: height - 80 - Math.random() * 30,
+          vx: (Math.random() - 0.5) * 2.0,
+          vy: -(2.5 + Math.random() * 3.0),
+          size: 24 + Math.random() * 12,
+          opacity: 1.0,
+          rotation: (Math.random() - 0.5) * 0.3,
+          vRot: (Math.random() - 0.5) * 0.04,
+          life: 0,
+          maxLife: 75 + Math.floor(Math.random() * 30)
+        };
+        particlesRef.current.push(particle);
+      }
+
+      startLoop();
+    }
+  }));
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleResize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
 
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       window.removeEventListener('resize', handleResize);
+      isRunningRef.current = false;
     };
   }, []);
 
