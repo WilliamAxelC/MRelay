@@ -52,7 +52,34 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isReady, setIsReady] = useState(false);
+  const currentVideoIdRef = useRef<string>('');
   const timePollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const propsRef = useRef({ 
+    isPlaying, 
+    isHost, 
+    onStateChange, 
+    targetPlayhead, 
+    onAutoplayBlocked,
+    videoId,
+    volume,
+    muted,
+    playbackRate 
+  });
+
+  useEffect(() => {
+    propsRef.current = { 
+      isPlaying, 
+      isHost, 
+      onStateChange, 
+      targetPlayhead, 
+      onAutoplayBlocked,
+      videoId,
+      volume,
+      muted,
+      playbackRate 
+    };
+  }, [isPlaying, isHost, onStateChange, targetPlayhead, onAutoplayBlocked, videoId, volume, muted, playbackRate]);
 
   useImperativeHandle(ref, () => ({
     getCurrentTime: () => {
@@ -124,8 +151,66 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
     }
   }));
 
-  // Load YouTube Iframe API
+  const handlePlayerStateChange = (event: any) => {
+    const newState = event.data;
+    const { 
+      isHost: currentIsHost, 
+      onStateChange: currentOnStateChange 
+    } = propsRef.current;
+
+    if (newState === window.YT.PlayerState.ENDED) {
+      if (currentIsHost) {
+        currentOnStateChange({ isPlaying: false, playhead: 0, isEnded: true });
+      }
+    }
+  };
+
+  // Initialize YouTube Iframe API once on mount
   useEffect(() => {
+    const initPlayer = () => {
+      if (playerRef.current || !containerRef.current) return;
+
+      const initialVideoId = propsRef.current.videoId || '';
+      currentVideoIdRef.current = initialVideoId;
+
+      playerRef.current = new window.YT.Player(containerRef.current, {
+        height: '100%',
+        width: '100%',
+        videoId: initialVideoId,
+        playerVars: {
+          autoplay: propsRef.current.isPlaying ? 1 : 0,
+          controls: 1,
+          modestbranding: 1,
+          rel: 0,
+          mute: propsRef.current.muted ? 1 : 0,
+          playsinline: 1,
+          origin: window.location.origin
+        },
+        events: {
+          onReady: () => {
+            setIsReady(true);
+            try {
+              playerRef.current.setVolume(propsRef.current.volume);
+              if (propsRef.current.muted) playerRef.current.mute();
+              if (propsRef.current.playbackRate !== 1.0) {
+                playerRef.current.setPlaybackRate(propsRef.current.playbackRate);
+              }
+              if (propsRef.current.isPlaying && initialVideoId) {
+                const startSec = Math.max(0, propsRef.current.targetPlayhead || 0);
+                playerRef.current.loadVideoById({ videoId: initialVideoId, startSeconds: startSec });
+              }
+            } catch {
+              // ignore
+            }
+          },
+          onStateChange: handlePlayerStateChange,
+          onError: (err: any) => {
+            console.warn('[YT Player Error]', err);
+          }
+        },
+      });
+    };
+
     if (!window.YT) {
       const tag = document.createElement('script');
       tag.src = "https://www.youtube.com/iframe_api";
@@ -139,41 +224,6 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
       initPlayer();
     }
 
-    function initPlayer() {
-      if (playerRef.current || !containerRef.current || !videoId) return;
-
-      playerRef.current = new window.YT.Player(containerRef.current, {
-        height: '100%',
-        width: '100%',
-        videoId,
-        playerVars: {
-          autoplay: 0,
-          controls: 1,
-          modestbranding: 1,
-          rel: 0,
-          mute: muted ? 1 : 0,
-          playsinline: 1,
-          origin: window.location.origin
-        },
-        events: {
-          onReady: () => {
-            setIsReady(true);
-            try {
-              playerRef.current.setVolume(volume);
-              if (muted) playerRef.current.mute();
-              if (playbackRate !== 1.0) playerRef.current.setPlaybackRate(playbackRate);
-            } catch {
-              // ignore
-            }
-          },
-          onStateChange: handlePlayerStateChange,
-          onError: (err: any) => {
-            console.warn('[YT Player Error]', err);
-          }
-        },
-      });
-    }
-
     return () => {
       if (playerRef.current) {
         try {
@@ -185,18 +235,32 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
         setIsReady(false);
       }
     };
-  }, [videoId, muted, volume, playbackRate]);
+  }, []);
 
-  // Playback Rate Sync
+  // Seamless Track Switching without Iframe destruction (Preserves audio context & autoplay permission)
   useEffect(() => {
-    if (isReady && playerRef.current && playbackRate) {
+    if (!isReady || !playerRef.current || !videoId) return;
+
+    if (currentVideoIdRef.current !== videoId) {
+      currentVideoIdRef.current = videoId;
       try {
-        playerRef.current.setPlaybackRate(playbackRate);
-      } catch {
-        // ignore
+        const startSeconds = Math.max(0, targetPlayhead || 0);
+        if (isPlaying) {
+          playerRef.current.loadVideoById({
+            videoId,
+            startSeconds
+          });
+        } else {
+          playerRef.current.cueVideoById({
+            videoId,
+            startSeconds
+          });
+        }
+      } catch (e) {
+        console.warn('[YT Player] Error loading track by ID', e);
       }
     }
-  }, [isReady, playbackRate]);
+  }, [videoId, isReady, isPlaying, targetPlayhead]);
 
   // Volume & Mute Sync
   useEffect(() => {
@@ -213,6 +277,17 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
       }
     }
   }, [isReady, volume, muted]);
+
+  // Playback Rate Sync
+  useEffect(() => {
+    if (isReady && playerRef.current && playbackRate) {
+      try {
+        playerRef.current.setPlaybackRate(playbackRate);
+      } catch {
+        // ignore
+      }
+    }
+  }, [isReady, playbackRate]);
 
   // Continuous Time Polling & Background Tab End-of-Track Watcher
   useEffect(() => {
@@ -243,11 +318,6 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
     };
   }, [isReady, onTimeUpdate]);
 
-  const propsRef = useRef({ isPlaying, isHost, onStateChange, targetPlayhead, onAutoplayBlocked });
-  useEffect(() => {
-    propsRef.current = { isPlaying, isHost, onStateChange, targetPlayhead, onAutoplayBlocked };
-  }, [isPlaying, isHost, onStateChange, targetPlayhead, onAutoplayBlocked]);
-
   // Handle Playback State & Drift Compensation
   useEffect(() => {
     if (!isReady || !playerRef.current || isUnsynced) return;
@@ -275,21 +345,6 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
     }
   }, [isReady, isPlaying, targetPlayhead, videoId, isUnsynced, updatedAt]);
 
-  const handlePlayerStateChange = (event: any) => {
-    const newState = event.data;
-    const { 
-      isHost: currentIsHost, 
-      onStateChange: currentOnStateChange 
-    } = propsRef.current;
-
-    if (newState === window.YT.PlayerState.ENDED) {
-      if (currentIsHost) {
-        currentOnStateChange({ isPlaying: false, playhead: 0, isEnded: true });
-      }
-      return;
-    }
-  };
-
   return (
     <div className="w-full h-full rounded-3xl overflow-hidden bg-black relative">
       <div 
@@ -307,18 +362,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
           <span className="px-3 py-1 bg-emerald-500/20 border border-emerald-500/40 rounded-full text-[10px] font-black uppercase tracking-widest text-emerald-400">
             Audio-Only Mode
           </span>
-          <p className="text-zinc-500 text-xs font-medium max-w-xs">Background audio stream active</p>
+          <span className="text-xs text-zinc-400">Bandwidth saver active</span>
         </div>
       </div>
-
-      <div
-        className={cn(
-          "w-full h-full transition-opacity duration-500",
-          dataSaver ? "opacity-0 pointer-events-none z-0" : "opacity-100"
-        )}
-      >
-        <div ref={containerRef} className="w-full h-full" />
-      </div>
+      <div ref={containerRef} className="w-full h-full" />
     </div>
   );
 });

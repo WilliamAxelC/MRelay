@@ -636,7 +636,6 @@ export function App() {
         {roomState?.currentTrackId && (
           <YouTubePlayer
             ref={ytPlayerRef}
-            key={roomState.currentTrackId}
             videoId={roomState.currentTrackId}
             isPlaying={roomState.isPlaying}
             targetPlayhead={roomState.currentPlayhead || 0}
