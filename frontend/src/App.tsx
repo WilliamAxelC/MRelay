@@ -6,7 +6,7 @@ import {
   Radio, LogOut, Settings, 
   Users, RotateCcw, Link2, Globe, 
   QrCode, X, Maximize2, Moon, Bookmark, HelpCircle, Wand2,
-  Heart
+  Heart, Volume2, Sparkles
 } from 'lucide-react';
 import { YouTubePlayer } from './components/YouTubePlayer';
 import type { YouTubePlayerRef } from './components/YouTubePlayer';
@@ -54,6 +54,8 @@ export function App() {
   const [volume, setVolume] = useState(65);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [dataSaver, setDataSaver] = useState(false);
+  const [showReactions, setShowReactions] = useState(true);
+  const [localAudioOverride, setLocalAudioOverride] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showRosterModal, setShowRosterModal] = useState(false);
@@ -620,10 +622,14 @@ export function App() {
     );
   }
 
+  const isMasterAudioOnly = roomState?.isMasterAudioOnly ?? false;
+  const isMutedByMasterOnly = isMasterAudioOnly && !isHost && !isUnsynced && !localAudioOverride;
+  const effectiveVolume = isMutedByMasterOnly ? 0 : volume;
+
   return (
     <div className="h-screen flex flex-col bg-black text-white overflow-hidden relative selection:bg-emerald-500 selection:text-black">
-      {/* Floating Canvas Reactions Layer */}
-      <FloatingReactions ref={floatingReactionsRef} />
+      {/* Floating Reactions Layer (GPU Composited) */}
+      <FloatingReactions ref={floatingReactionsRef} enabled={showReactions} />
 
       {/* YouTube Media Engine (Fixed behind app layout to maintain background audio & event loop) */}
       <div className="fixed bottom-0 right-0 w-64 h-36 -z-50 pointer-events-none opacity-[0.001] overflow-hidden" aria-hidden="true">
@@ -638,7 +644,8 @@ export function App() {
             onStateChange={handlePlayerStateChange}
             onTimeUpdate={handleTimeUpdate}
             updatedAt={roomState.updatedAt || 0}
-            volume={volume}
+            volume={effectiveVolume}
+            muted={effectiveVolume === 0}
             playbackRate={playbackRate}
             dataSaver={dataSaver}
             isUnsynced={isUnsynced}
@@ -859,6 +866,9 @@ export function App() {
                 canSkip={isHost && ((roomState?.queue?.length || 0) > 0 || (roomState?.repeatMode || 'off') !== 'off' || !!roomState?.isDjAutoplayEnabled)}
                 audioUnlocked={audioUnlocked}
                 onUnlockAudio={handleUnlockAudio}
+                isMasterAudioOnly={isMasterAudioOnly}
+                localAudioOverride={localAudioOverride}
+                onToggleLocalAudioOverride={() => setLocalAudioOverride(v => !v)}
               />
             </div>
           </div>
@@ -971,6 +981,46 @@ export function App() {
                   )}
                 >
                   <div className={cn("w-4 h-4 bg-black rounded-full absolute top-1 transition-all", roomState?.isRequestOnly ? "right-1" : "left-1")} />
+                </button>
+              </div>
+
+              {/* Host Speaker Only Mode */}
+              <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-2xl border border-zinc-800">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Host Speaker Only</span>
+                  </div>
+                  <div className="text-[10px] text-zinc-500">Only host renders audio (ideal for parties & speakers)</div>
+                </div>
+                <button
+                  onClick={() => emitMutation('SET_MASTER_AUDIO_ONLY', { isMasterAudioOnly: !roomState?.isMasterAudioOnly })}
+                  className={cn(
+                    "w-11 h-6 rounded-full transition-all relative",
+                    roomState?.isMasterAudioOnly ? "bg-emerald-500" : "bg-zinc-800"
+                  )}
+                >
+                  <div className={cn("w-4 h-4 bg-black rounded-full absolute top-1 transition-all", roomState?.isMasterAudioOnly ? "right-1" : "left-1")} />
+                </button>
+              </div>
+
+              {/* Floating Reactions Toggle */}
+              <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-2xl border border-zinc-800">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Floating Reactions</span>
+                  </div>
+                  <div className="text-[10px] text-zinc-500">Display floating emoji bubbles when reacting</div>
+                </div>
+                <button
+                  onClick={() => setShowReactions(!showReactions)}
+                  className={cn(
+                    "w-11 h-6 rounded-full transition-all relative",
+                    showReactions ? "bg-emerald-500" : "bg-zinc-800"
+                  )}
+                >
+                  <div className={cn("w-4 h-4 bg-black rounded-full absolute top-1 transition-all", showReactions ? "right-1" : "left-1")} />
                 </button>
               </div>
 

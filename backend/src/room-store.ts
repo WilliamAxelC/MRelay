@@ -19,6 +19,7 @@ export interface RoomRecord {
   isPublic: boolean;
   isRequestOnly: boolean;
   isDjAutoplayEnabled?: boolean;
+  isMasterAudioOnly?: boolean;
   pendingRequests: PendingRequest[];
   chatRateLimit?: { maxTokens: number; intervalMs: number };
   repeatMode: 'off' | 'track' | 'queue';

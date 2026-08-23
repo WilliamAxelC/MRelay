@@ -10,3 +10,21 @@ body {
   @apply bg-zinc-950 text-zinc-50 antialiased selection:bg-zinc-800;
   margin: 0;
 }
+
+@keyframes float-fade {
+  0% {
+    transform: translate3d(0, 0, 0) scale(var(--drift-scale, 1)) rotate(0deg);
+    opacity: 1;
+  }
+  60% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate3d(var(--drift-x, 0px), -280px, 0) scale(calc(var(--drift-scale, 1) * 1.15)) rotate(var(--drift-rot, 15deg));
+    opacity: 0;
+  }
+}
+
+.animate-float-fade {
+  animation: float-fade 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}

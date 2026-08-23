@@ -78,6 +78,7 @@ export interface RoomMutation {
       | 'SET_PEER_STATUS' 
       | 'SET_CHAT_RATE_LIMIT' 
       | 'SET_REPEAT_MODE' 
+      | 'SET_MASTER_AUDIO_ONLY'
       | 'TRACK_END';
     playhead?: number;
     currentTrackId?: string;
@@ -92,6 +93,7 @@ export interface RoomMutation {
     isPublic?: boolean;
     isRequestOnly?: boolean;
     isDjAutoplayEnabled?: boolean;
+    isMasterAudioOnly?: boolean;
     requestId?: string;
     username?: string;
     targetUserId?: string;
@@ -125,6 +127,7 @@ export interface StateSync {
     isPublic?: boolean;
     isRequestOnly?: boolean;
     isDjAutoplayEnabled?: boolean;
+    isMasterAudioOnly?: boolean;
     pendingRequests?: PendingRequest[];
     peers?: PeerInfo[];
     hostUserId?: string;

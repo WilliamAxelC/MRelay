@@ -61,6 +61,7 @@ export interface RoomState {
   isPublic?: boolean;
   isRequestOnly?: boolean;
   isDjAutoplayEnabled?: boolean;
+  isMasterAudioOnly?: boolean;
   pendingRequests?: PendingRequest[];
   peers?: PeerInfo[];
   hostUserId?: string;
@@ -233,8 +234,13 @@ export function useSocket(
     }
   }, [isHost, isConnected, broadcastP2P]);
 
+  const lastReactionTimeRef = useRef<number>(0);
   const broadcastReaction = useCallback((emoji: string) => {
-    broadcastP2P('PEER_REACTION', { emoji });
+    const now = Date.now();
+    if (now - lastReactionTimeRef.current >= 90) {
+      lastReactionTimeRef.current = now;
+      broadcastP2P('PEER_REACTION', { emoji });
+    }
   }, [broadcastP2P]);
 
   return {

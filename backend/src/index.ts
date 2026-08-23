@@ -424,6 +424,7 @@ export const buildStateSyncPayload = (roomId: string, correlationId: string, sta
     isPublic: state.isPublic ?? true,
     isRequestOnly: state.isRequestOnly ?? false,
     isDjAutoplayEnabled: state.isDjAutoplayEnabled ?? false,
+    isMasterAudioOnly: state.isMasterAudioOnly ?? false,
     pendingRequests: state.pendingRequests || [],
     peers,
     hostUserId: state.hostUserId,
@@ -555,6 +556,7 @@ export const triggerTrackEnd = async (roomId: string) => {
     isPublic: room.isPublic,
     isRequestOnly: room.isRequestOnly,
     isDjAutoplayEnabled: room.isDjAutoplayEnabled,
+    isMasterAudioOnly: room.isMasterAudioOnly,
     pendingRequests: room.pendingRequests,
     chatRateLimit: room.chatRateLimit,
     repeatMode: room.repeatMode,
@@ -792,6 +794,7 @@ io.on('connection', async (socket) => {
     let isPublic = state.isPublic;
     let isRequestOnly = state.isRequestOnly;
     let isDjAutoplayEnabled = state.isDjAutoplayEnabled;
+    let isMasterAudioOnly = state.isMasterAudioOnly;
     let pendingRequests = [...state.pendingRequests];
     let chatRateLimit = state.chatRateLimit;
     let repeatMode = state.repeatMode;
@@ -814,6 +817,9 @@ io.on('connection', async (socket) => {
         break;
       case 'SET_DJ_AUTOPLAY':
         if (mutation.payload.isDjAutoplayEnabled !== undefined) isDjAutoplayEnabled = mutation.payload.isDjAutoplayEnabled;
+        break;
+      case 'SET_MASTER_AUDIO_ONLY':
+        if (mutation.payload.isMasterAudioOnly !== undefined) isMasterAudioOnly = mutation.payload.isMasterAudioOnly;
         break;
       case 'SET_TITLE':
         if (mutation.payload.title) title = mutation.payload.title;
@@ -1241,6 +1247,7 @@ io.on('connection', async (socket) => {
       isPublic,
       isRequestOnly,
       isDjAutoplayEnabled,
+      isMasterAudioOnly,
       pendingRequests,
       chatRateLimit,
       repeatMode,

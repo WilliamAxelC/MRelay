@@ -278,10 +278,8 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
   const handlePlayerStateChange = (event: any) => {
     const newState = event.data;
     const { 
-      isPlaying: currentIsPlaying, 
       isHost: currentIsHost, 
-      onStateChange: currentOnStateChange,
-      targetPlayhead: currentTargetPlayhead 
+      onStateChange: currentOnStateChange 
     } = propsRef.current;
 
     if (newState === window.YT.PlayerState.ENDED) {
@@ -289,25 +287,6 @@ export const YouTubePlayer = forwardRef<YouTubePlayerRef, YouTubePlayerProps>(({
         currentOnStateChange({ isPlaying: false, playhead: 0, isEnded: true });
       }
       return;
-    }
-
-    if (!currentIsHost) return;
-
-    try {
-      const playhead = playerRef.current.getCurrentTime() || 0;
-      const isManualSeek = Math.abs(playhead - currentTargetPlayhead) > 2.5;
-
-      if (newState === window.YT.PlayerState.PLAYING) {
-        if (!currentIsPlaying || isManualSeek) {
-          currentOnStateChange({ isPlaying: true, playhead });
-        }
-      } else if (newState === window.YT.PlayerState.PAUSED) {
-        if (currentIsPlaying || isManualSeek) {
-          currentOnStateChange({ isPlaying: false, playhead });
-        }
-      }
-    } catch {
-      // ignore
     }
   };
 

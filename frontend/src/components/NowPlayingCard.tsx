@@ -41,6 +41,9 @@ interface NowPlayingCardProps {
   canSkip: boolean;
   audioUnlocked: boolean;
   onUnlockAudio: () => void;
+  isMasterAudioOnly?: boolean;
+  localAudioOverride?: boolean;
+  onToggleLocalAudioOverride?: () => void;
 }
 
 export const NowPlayingCard: React.FC<NowPlayingCardProps> = ({
@@ -75,7 +78,10 @@ export const NowPlayingCard: React.FC<NowPlayingCardProps> = ({
   canGoBack,
   canSkip,
   audioUnlocked,
-  onUnlockAudio
+  onUnlockAudio,
+  isMasterAudioOnly = false,
+  localAudioOverride = false,
+  onToggleLocalAudioOverride
 }) => {
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
@@ -370,6 +376,26 @@ export const NowPlayingCard: React.FC<NowPlayingCardProps> = ({
           <SkipForward className="w-5 h-5 fill-current" />
         </button>
       </div>
+
+      {/* Host Speaker Mode Notice for Listeners */}
+      {isMasterAudioOnly && !isHost && (
+        <div className="w-full max-w-xs mb-3 p-2.5 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl flex items-center justify-between gap-2 text-[11px] text-emerald-300">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Volume2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="truncate font-medium">
+              {localAudioOverride ? 'Audio rendering on this device' : 'Playing on Host Speakers'}
+            </span>
+          </div>
+          {onToggleLocalAudioOverride && (
+            <button
+              onClick={onToggleLocalAudioOverride}
+              className="px-2 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 rounded-xl text-[10px] font-bold text-emerald-400 shrink-0 transition-all active:scale-95"
+            >
+              {localAudioOverride ? 'Mute Device' : 'Listen Here'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Volume Bar */}
       <div className="w-full max-w-xs flex items-center gap-3 px-3 py-2 bg-zinc-900/60 rounded-2xl border border-zinc-800/80">
